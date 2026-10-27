@@ -60,13 +60,14 @@ jobs:
           tar --zstd --extract --file "$RUNNER_TEMP/$SDK" --directory "$sdk_dir" --strip-components=1
           cd "$sdk_dir"
 
-          cp -a "$GITHUB_WORKSPACE/luci-app-tidynet" package/luci-app-tidynet
+          mkdir -p package/feeds/tidynet
+          ln -s "$GITHUB_WORKSPACE/luci-app-tidynet" package/feeds/tidynet/luci-app-tidynet
           printf '%s\n' "src-git nikki https://github.com/nikkinikki-org/OpenWrt-nikki.git;main" >> feeds.conf.default
           ./scripts/feeds update -a
           ./scripts/feeds install adblock-fast luci-app-nikki nikki
 
           make defconfig
-          make package/luci-app-tidynet/compile -j2 V=s
+          make package/feeds/tidynet/luci-app-tidynet/compile -j2 V=s
 
           dist="$GITHUB_WORKSPACE/dist/ImmortalWrt-$RELEASE-x86_64"
           mkdir -p "$dist"
@@ -114,3 +115,4 @@ jobs:
             The package is LuCI architecture-independent; its runtime dependencies must be available from your firmware's configured feeds.
           files: dist/**/*
           fail_on_unmatched_files: true
+
