@@ -1,0 +1,100 @@
+#!/bin/sh
+
+set -f
+PATH='/usr/sbin:/usr/bin:/sbin:/bin'
+export PATH
+
+json_quote() {
+	local s=$1
+	s=$(printf '%s' "$s" | tr -d '\r\n\t' | sed 's/\\/\\\\/g; s/"/\\"/g')
+	printf '"%s"' "$s"
+}
+
+json_bool() {
+	[ "$1" = 1 ] && printf true || printf false
+}
+
+has_command() { command -v "$1" >/dev/null 2>&1; }
+
+safe_section() { case "$1" in ''|*[!A-Za-z0-9_@.-]*) return 1;; *) return 0;; esac; }
+
+case "$1" in
+list)
+	cat <<'EOF'
+{
+		"status": {},
+	"action": { "action": "String", "target": "String" }
+}
+EOF
+	;;
+call)
+	case "$2" in
+	status)
+		mihomo_installed=0; mihomo_running=0; api=''; mihomo_error=''; secret=''; auth='';
+		if [ -x /etc/init.d/mihomo ]; then mihomo_installed=1; elif [ -x /etc/init.d/nikki ]; then mihomo_installed=1; fi
+		if has_command pidof && pidof mihomo >/dev/null 2>&1; then mihomo_running=1; fi
+		if has_command uci; then
+			api=$(uci -q get mihomo.config.api 2>/dev/null)
+			[ -n "$api" ] || api=$(uci -q get nikki.mixin.api_listen 2>/dev/null)
+		fi
+		adblock_installed=0; adblock_enabled=0; backend='unknown'; blocked=''; sources=''; last_update=''; adblock_note='';
+		if [ -x /etc/init.d/adblock-fast ]; then
+			adblock_installed=1
+			if has_command uci && [ "$(uci -q get adblock-fast.config.enabled 2>/dev/null)" = 1 ]; then adblock_enabled=1; fi
+			if has_command uci; then
+				backend=$(uci -q get adblock-fast.config.dns 2>/dev/null)
+			fi
+			# A stable machine-readable counter is not part of every supported release.
+			[ -n "$blocked" ] || adblock_note='Installed adblock-fast does not expose a supported machine-readable blocked-domain counter; see its LuCI status page.'
+		fi
+		dns_backend='';
+		if has_command uci; then
+			if [ -x /etc/init.d/smartdns ] && /etc/init.d/smartdns enabled >/dev/null 2>&1; then dns_backend=SmartDNS
+			elif [ -x /etc/init.d/dnsmasq ] && /etc/init.d/dnsmasq enabled >/dev/null 2>&1; then dns_backend=dnsmasq
+			elif [ -x /etc/init.d/unbound ] && /etc/init.d/unbound enabled >/dev/null 2>&1; then dns_backend=Unbound; fi
+		fi
+		dns_available=0; [ -n "$dns_backend" ] && dns_available=1
+		subscriptions=''; comma=''
+		if has_command uci; then
+			for section in $(uci -q show nikki 2>/dev/null | sed -n 's/^nikki\.\([^=]*\)=subscription$/\1/p'); do
+				safe_section "$section" || continue
+				name=$(uci -q get "nikki.$section.name" 2>/dev/null)
+				updated=$(uci -q get "nikki.$section.update" 2>/dev/null)
+				[ -n "$name" ] || name=$section
+				[ -n "$updated" ] && updated_json=$(json_quote "$updated") || updated_json=null
+				subscriptions="$subscriptions$comma{\"section\":$(json_quote "$section"),\"name\":$(json_quote "$name"),\"updated\":$updated_json}"
+				comma=,
+			done
+		fi
+		printf '{"mihomo":{"installed":%s,"running":%s,"api":%s,"error":%s},' "$(json_bool "$mihomo_installed")" "$(json_bool "$mihomo_running")" "$(json_quote "$api")" "$(json_quote "$mihomo_error")"
+		printf '"subscriptions":[%s],"dashboard_url":"/ui/",' "$subscriptions"
+		printf '"adblock":{"installed":%s,"enabled":%s,"backend":%s,"blocked_domains":' "$(json_bool "$adblock_installed")" "$(json_bool "$adblock_enabled")" "$(json_quote "$backend")"
+		[ -n "$blocked" ] && printf '%s' "$blocked" || printf null
+		printf ',"enabled_sources":'; [ -n "$sources" ] && printf '%s' "$sources" || printf null
+		printf ',"last_update":'; [ -n "$last_update" ] && printf '%s' "$(json_quote "$last_update")" || printf null
+		printf ',"note":%s},' "$(json_quote "$adblock_note")"
+		printf '"dns":{"available":%s,"backend":%s,"note":"DNS query counters require an optional logging backend."},' "$(json_bool "$dns_available")" "$(json_quote "$dns_backend")"
+		printf '"ok":true}\n'
+		;;
+	action)
+		read -r input
+		action=$(printf '%s' "$input" | jsonfilter -e '@.action' 2>/dev/null)
+		target=$(printf '%s' "$input" | jsonfilter -e '@.target' 2>/dev/null)
+		case "$action" in
+		subscription-update)
+			safe_section "$target" || { printf '{"ok":false,"error":"Invalid subscription section"}\n'; exit 0; }
+			if [ -x /etc/init.d/nikki ] && uci -q get "nikki.$target.name" >/dev/null 2>&1; then
+				/etc/init.d/nikki update_subscription "$target" >/dev/null 2>&1 && printf '{"ok":true}\n' || printf '{"ok":false,"error":"Nikki subscription update failed; check Nikki logs"}\n'
+			else printf '{"ok":false,"error":"Nikki subscription was not found"}\n'; fi
+			;;
+		adblock-update)
+			if [ -x /etc/init.d/adblock-fast ]; then /etc/init.d/adblock-fast dl >/dev/null 2>&1 && printf '{"ok":true}\n' || printf '{"ok":false,"error":"adblock-fast update failed"}\n'; else printf '{"ok":false,"error":"adblock-fast is not installed"}\n'; fi
+			;;
+		*) printf '{"ok":false,"error":"Unsupported action"}\n';;
+		esac
+		;;
+	*) exit 1;;
+	esac
+	;;
+*) exit 1;;
+esac

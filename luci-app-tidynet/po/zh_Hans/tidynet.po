@@ -1,0 +1,74 @@
+msgid ""
+msgstr ""
+"Content-Type: text/plain; charset=UTF-8\n"
+"Content-Transfer-Encoding: 8bit\n"
+"Plural-Forms: nplurals=1; plural=0;\n"
+
+msgid "Your subscriptions, DNS and ad blocking at a glance."
+msgstr "订阅、DNS 和广告拦截，一眼掌握。"
+
+msgid "Refresh status"
+msgstr "刷新状态"
+
+msgid "Running"
+msgstr "运行中"
+
+msgid "Stopped"
+msgstr "已停止"
+
+msgid "Not installed"
+msgstr "未安装"
+
+msgid "Subscriptions"
+msgstr "订阅管理"
+
+msgid "Subscription integration is not configured yet."
+msgstr "尚未配置订阅来源。"
+
+msgid "Update"
+msgstr "更新订阅"
+
+msgid "Update time unavailable"
+msgstr "暂无更新时间"
+
+msgid "Ad blocking"
+msgstr "广告拦截"
+
+msgid "Enabled"
+msgstr "已启用"
+
+msgid "Disabled"
+msgstr "未启用"
+
+msgid "adblock-fast not installed"
+msgstr "未安装 adblock-fast"
+
+msgid "Blocked domains"
+msgstr "拦截域名数"
+
+msgid "Enabled sources"
+msgstr "启用的规则源"
+
+msgid "Last update"
+msgstr "最近更新"
+
+msgid "Unavailable"
+msgstr "暂不可用"
+
+msgid "Update lists"
+msgstr "更新拦截规则"
+
+msgid "Settings"
+msgstr "设置"
+
+msgid "DNS"
+msgstr "DNS 解析"
+
+msgid "Available"
+msgstr "可用"
+
+msgid "Status unavailable"
+msgstr "状态不可用"
+
+msgid "Open MetaCubeXD dashboard"
+msgstr "打开 MetaCubeXD 面板"

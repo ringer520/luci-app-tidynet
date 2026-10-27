@@ -1,0 +1,15 @@
+{
+	"luci-app-tidynet": {
+		"description": "Grant access to TidyNet status and management actions",
+		"read": {
+			"ubus": {
+				"tidynet": [ "status" ]
+			}
+		},
+		"write": {
+			"ubus": {
+				"tidynet": [ "action" ]
+			}
+		}
+	}
+}

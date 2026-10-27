@@ -1,0 +1,26 @@
+.tidynet { max-width:1180px; margin:0 auto; }
+.tidynet-header { display:flex; align-items:center; justify-content:space-between; gap:1rem; margin:1rem 0 1.5rem; }
+.tidynet-header h2 { margin:0; }
+.tidynet-header p { margin:.4rem 0 0; color:var(--text-color-secondary,#777); }
+.tidynet-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:1rem; }
+.tidynet-card { min-width:0; border:1px solid var(--border-color,#ddd); border-radius:12px; padding:1rem 1.15rem; background:var(--background-color-content,#fff); box-shadow:0 2px 10px rgba(0,0,0,.035); }
+.tidynet-card h3 { margin:0 0 1rem; font-size:1.1rem; }
+.tidynet-card-body { display:flex; flex-direction:column; gap:.85rem; }
+.tidynet-status-line { display:flex; align-items:center; flex-wrap:wrap; gap:.65rem; }
+.tidynet-badge { display:inline-flex; align-items:center; border-radius:999px; padding:.25rem .7rem; font-size:.85rem; font-weight:600; }
+.tidynet-badge.is-ok { color:#166534; background:#dcfce7; }
+.tidynet-badge.is-muted { color:#475569; background:#e2e8f0; }
+.tidynet-metrics { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:.6rem; }
+.tidynet-metric { border-radius:9px; padding:.8rem; background:var(--background-color-high,#f5f6f7); min-width:0; }
+.tidynet-metric strong,.tidynet-metric small { display:block; overflow-wrap:anywhere; }
+.tidynet-metric strong { font-size:1.15rem; }
+.tidynet-metric small { margin-top:.35rem; color:var(--text-color-secondary,#777); }
+.tidynet-list { display:flex; flex-direction:column; }
+.tidynet-row { display:flex; justify-content:space-between; align-items:center; gap:.75rem; padding:.65rem 0; border-bottom:1px solid var(--border-color,#eee); }
+.tidynet-row:last-child { border-bottom:0; }
+.tidynet-row strong,.tidynet-row small { display:block; overflow-wrap:anywhere; }
+.tidynet-row small,.tidynet-hint,.tidynet-empty { color:var(--text-color-secondary,#777); }
+.tidynet-row small { margin-top:.25rem; }
+.tidynet-actions { display:flex; flex-wrap:wrap; gap:.5rem; }
+@media (max-width:760px) { .tidynet-grid { grid-template-columns:1fr; } .tidynet-header { align-items:flex-start; } }
+@media (max-width:420px) { .tidynet-header { flex-direction:column; } .tidynet-metrics { grid-template-columns:1fr; } }
