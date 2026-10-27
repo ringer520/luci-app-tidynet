@@ -1,0 +1,5 @@
+#!/bin/sh
+chmod 600 /etc/config/tidynet
+chmod 755 /usr/libexec/rpcd/tidynet /usr/libexec/tidynet-job
+exit 0
+

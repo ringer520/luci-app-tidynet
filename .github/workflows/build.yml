@@ -1,0 +1,117 @@
+name: Build ImmortalWrt packages
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tidynet-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ImmortalWrt ${{ matrix.release }} (x86/64 SDK, package arch all)
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - release: 24.10.6
+            sdk: immortalwrt-sdk-24.10.6-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
+            sha256: 709bea2ce466b7ad671ce00fdcb1eb69b2b3fa0f0921b12b620725d95cd8c0e5
+          - release: 25.12.2
+            sdk: immortalwrt-sdk-25.12.2-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            sha256: 4d4631f134c2f27215a91aa7ef5bf9a01ea96c2450d3b8a5c38048c32462ac60
+    steps:
+      - name: Check out TidyNet
+        uses: actions/checkout@v4
+
+      - name: Install SDK host tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y zstd gawk gettext libncurses-dev libssl-dev rsync
+
+      - name: Download and verify ImmortalWrt SDK
+        env:
+          RELEASE: ${{ matrix.release }}
+          SDK: ${{ matrix.sdk }}
+          SDK_SHA256: ${{ matrix.sha256 }}
+        run: |
+          set -euo pipefail
+          archive="$RUNNER_TEMP/$SDK"
+          url="https://downloads.immortalwrt.org/releases/$RELEASE/targets/x86/64/$SDK"
+          curl --fail --location --retry 4 --retry-delay 2 "$url" --output "$archive"
+          printf '%s  %s\n' "$SDK_SHA256" "$archive" | sha256sum --check --status
+
+      - name: Prepare feeds and build package
+        env:
+          RELEASE: ${{ matrix.release }}
+          SDK: ${{ matrix.sdk }}
+        run: |
+          set -euo pipefail
+          sdk_dir="$RUNNER_TEMP/sdk"
+          mkdir -p "$sdk_dir"
+          tar --zstd --extract --file "$RUNNER_TEMP/$SDK" --directory "$sdk_dir" --strip-components=1
+          cd "$sdk_dir"
+
+          printf '%s\n' "src-link tidynet $GITHUB_WORKSPACE" >> feeds.conf.default
+          printf '%s\n' "src-git nikki https://github.com/nikkinikki-org/OpenWrt-nikki.git;main" >> feeds.conf.default
+          ./scripts/feeds update -a
+          ./scripts/feeds install luci-app-tidynet adblock-fast luci-app-nikki nikki
+
+          make defconfig
+          make package/luci-app-tidynet/compile -j2 V=s
+
+          dist="$GITHUB_WORKSPACE/dist/ImmortalWrt-$RELEASE-x86_64"
+          mkdir -p "$dist"
+          find bin/packages -type f \( -name 'luci-app-tidynet*.ipk' -o -name 'luci-app-tidynet*.apk' \) -exec cp -v '{}' "$dist/" \;
+          test -n "$(find "$dist" -maxdepth 1 -type f -name 'luci-app-tidynet*' -print -quit)"
+          printf '%s\n' "ImmortalWrt $RELEASE / x86_64 SDK. TidyNet is architecture-independent (all)." > "$dist/BUILD-INFO.txt"
+          (cd "$dist" && sha256sum luci-app-tidynet* > SHA256SUMS)
+
+      - name: Upload install package
+        uses: actions/upload-artifact@v4
+        with:
+          name: TidyNet-ImmortalWrt-${{ matrix.release }}-x86_64
+          path: dist/ImmortalWrt-${{ matrix.release }}-x86_64/*
+          if-no-files-found: error
+          retention-days: 90
+
+  release:
+    name: Publish install packages
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    needs: build
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - name: Download both SDK packages
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+
+      - name: Publish GitHub prerelease
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: build-${{ github.run_number }}
+          name: TidyNet build ${{ github.run_number }}
+          prerelease: true
+          make_latest: false
+          generate_release_notes: false
+          body: |
+            Automated TidyNet package build from commit ${{ github.sha }}.
+
+            Choose the package matching your ImmortalWrt version:
+            - 24.10.x: IPK
+            - 25.12.x: APK
+
+            The package is LuCI architecture-independent; its runtime dependencies must be available from your firmware's configured feeds.
+          files: dist/**/*
+          fail_on_unmatched_files: true
+

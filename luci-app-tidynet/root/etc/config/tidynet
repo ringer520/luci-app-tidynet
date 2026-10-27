@@ -1,0 +1,7 @@
+config settings 'main'
+	option dashboard_url ''
+	option agh_enabled '0'
+	option agh_port '3000'
+	option agh_username ''
+	option agh_password ''
+

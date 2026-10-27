@@ -1,0 +1,6 @@
+.tidynet-backup/
+node_modules/
+tests/output/
+*.ipk
+*.apk
+

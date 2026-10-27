@@ -72,3 +72,4 @@ msgstr "状态不可用"
 
 msgid "Open MetaCubeXD dashboard"
 msgstr "打开 MetaCubeXD 面板"
+

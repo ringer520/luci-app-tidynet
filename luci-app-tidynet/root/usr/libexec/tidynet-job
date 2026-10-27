@@ -1,0 +1,68 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+. /usr/lib/tidynet/core.sh
+operation=$1
+section=$2
+printf '%s\n' "$$" > "$TN_RUN/lock/pid"
+trap 'unlock' EXIT
+trap 'job_record "$operation" error "任务被中断，请检查后端状态。"; exit 1' HUP INT TERM
+rc=0
+message='任务已完成。'
+run_service() {
+ if [ -n "$3" ]; then timeout 600 "$TN_INIT/$1" "$2" "$3" >/dev/null 2>&1
+ else timeout 600 "$TN_INIT/$1" "$2" >/dev/null 2>&1; fi
+}
+set_config() {
+ stage_begin "$1" || return 1
+ if ! set_value "$2" "$3"; then stage_abort; return 1; fi
+ stage_end
+}
+case "$operation" in
+ subscription-update|subscription-use)
+  if ! is_section nikki "$section" subscription; then rc=1
+  else
+   set_config nikki "$section.success" 0 && run_service nikki update_subscription "$section" || rc=1
+   [ "$(get "nikki.$section.success")" = 1 ] || rc=1
+   if [ "$rc" = 0 ] && [ "$operation" = subscription-use ]; then
+    set_config nikki config.profile "subscription:$section" || rc=1
+    if [ "$rc" = 0 ] && [ "$(get nikki.config.enabled)" = 1 ]; then run_service nikki reload || rc=1; fi
+   fi
+  fi
+  message='订阅已更新。';;
+ mihomo-start)
+  set_config nikki config.enabled 1 && "$TN_INIT/nikki" enable && run_service nikki start || rc=1;;
+ mihomo-stop)
+  set_config nikki config.enabled 0 && run_service nikki stop || rc=1;;
+ mihomo-reload)
+  if [ "$(get nikki.config.enabled)" = 1 ]; then run_service nikki reload || rc=1
+  else message='配置已保存；Mihomo 未启用，未自动启动。'; fi;;
+ adblock-start)
+  set_config adblock-fast config.enabled 1 && "$TN_INIT/adblock-fast" enable && run_service adblock-fast start || rc=1;;
+ adblock-stop)
+  set_config adblock-fast config.enabled 0 && run_service adblock-fast stop || rc=1;;
+ adblock-update) run_service adblock-fast dl || rc=1;;
+ adblock-reload)
+  if [ "$(get adblock-fast.config.enabled)" = 1 ]; then run_service adblock-fast reload || rc=1
+  else message='规则已保存；广告过滤未启用，未自动启动。'; fi;;
+ *) rc=1;;
+esac
+case "$operation" in adblock-update)
+ if [ "$rc" = 0 ]; then
+  attempt=0; state=''
+  while [ "$attempt" -lt 120 ]; do
+   data=$(ubus -t 3 call service list '{"name":"adblock-fast"}' 2>/dev/null)
+   state=$(jget "$data" '@.*.data.status')
+   case "$state" in
+    statusSuccess) break;;
+    statusFail*|statusError*|statusStopped|'') rc=1; break;;
+   esac
+   attempt=$((attempt+1)); sleep 2
+  done
+  [ "$state" = statusSuccess ] || rc=1
+  [ "$rc" = 0 ] && date '+%Y-%m-%d %H:%M:%S' > "$TN_RUN/adblock-updated"
+ fi;;
+esac
+if [ "$rc" = 0 ]; then job_record "$operation" success "$message"
+else job_record "$operation" error '任务失败或未能确认完成；已保存的配置会保留。请检查后端状态和配置后重试。'; fi
+exit "$rc"
+
