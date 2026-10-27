@@ -60,11 +60,12 @@ jobs:
           tar --zstd --extract --file "$RUNNER_TEMP/$SDK" --directory "$sdk_dir" --strip-components=1
           cd "$sdk_dir"
 
-          mkdir -p package/feeds/tidynet
-          ln -s "$GITHUB_WORKSPACE/luci-app-tidynet" package/feeds/tidynet/luci-app-tidynet
+          mkdir -p "$RUNNER_TEMP/tidynet-feed"
+          cp -a "$GITHUB_WORKSPACE/luci-app-tidynet" "$RUNNER_TEMP/tidynet-feed/luci-app-tidynet"
+          printf '%s\n' "src-cpy tidynet $RUNNER_TEMP/tidynet-feed" >> feeds.conf.default
           printf '%s\n' "src-git nikki https://github.com/nikkinikki-org/OpenWrt-nikki.git;main" >> feeds.conf.default
           ./scripts/feeds update -a
-          ./scripts/feeds install adblock-fast luci-app-nikki nikki
+          ./scripts/feeds install adblock-fast luci-app-nikki nikki luci-app-tidynet
 
           make defconfig
           make package/feeds/tidynet/luci-app-tidynet/compile -j2 V=s
