@@ -1,153 +1,269 @@
 #!/bin/sh
 # SPDX-License-Identifier: GPL-3.0-or-later
 . /usr/lib/tidynet/core.sh
+
 operation=$1
 section=$2
+mkdir -p "$TN_RUN" "$TN_HOME/download" "$TN_HOME/profiles" "$TN_HOME/rules" || exit 1
+chmod 700 "$TN_HOME" "$TN_HOME/download" "$TN_HOME/profiles" "$TN_HOME/rules"
 printf '%s\n' "$$" > "$TN_RUN/lock/pid"
 trap 'unlock' EXIT
-trap 'job_record "$operation" error "任务被中断，请检查后端状态。"; exit 1' HUP INT TERM
+trap 'job_record "$operation" error "任务被中断；现有核心与配置已保留。"; exit 1' HUP INT TERM
 rc=0
 message='任务已完成。'
-error_message='任务失败或未能确认完成；已保存的配置会保留。请检查网络、软件源和后端状态后重试。'
-run_service() {
- if [ -n "$3" ]; then timeout 600 "$TN_INIT/$1" "$2" "$3" >/dev/null 2>&1
- else timeout 600 "$TN_INIT/$1" "$2" >/dev/null 2>&1; fi
-}
+error_message='任务失败；现有配置和核心已保留。请检查网络、磁盘空间和任务日志后重试。'
+
 set_config() {
- stage_begin "$1" || return 1
- if ! set_value "$2" "$3"; then stage_abort; return 1; fi
- stage_end
+	uci -q set "tidynet.$1=$2" && uci -q commit tidynet && chmod 600 /etc/config/tidynet
 }
-setup_nikki_feed() {
- [ -x /sbin/fw4 ] || { error_message='当前固件缺少 firewall4，Nikki 不支持此设备。'; return 1; }
- [ -r /etc/openwrt_release ] || { error_message='无法识别 OpenWrt/ImmortalWrt 版本。'; return 1; }
- . /etc/openwrt_release
- case "$DISTRIB_RELEASE" in
-  *24.10*) branch=openwrt-24.10;;
-  *25.12*) branch=openwrt-25.12;;
-  SNAPSHOT*) branch=SNAPSHOT;;
-  *) error_message="暂不支持固件版本 ${DISTRIB_RELEASE:-unknown}。"; return 1;;
- esac
- case "$DISTRIB_ARCH" in ''|*[!A-Za-z0-9_-]*) error_message='固件报告的设备架构无效。'; return 1;; esac
- feed_url="https://nikkinikki.pages.dev/$branch/$DISTRIB_ARCH/nikki"
- key_file="$TN_RUN/nikki-feed-key"
- mkdir -p "$TN_RUN" || return 1
- if [ -x /bin/opkg ]; then
-  curl --fail --location --silent --show-error --retry 3 --connect-timeout 10 --max-time 60 --max-filesize 32768 --proto '=https' https://nikkinikki.pages.dev/key-build.pub -o "$key_file" || { error_message='下载 Nikki 软件源签名密钥失败，请检查网络连接。'; return 1; }
-  opkg-key add "$key_file" >/dev/null 2>&1 || { rm -f "$key_file"; error_message='导入 Nikki 软件源签名密钥失败。'; return 1; }
-  rm -f "$key_file"
-  mkdir -p /etc/opkg
-  touch /etc/opkg/customfeeds.conf
-  feed_line="src/gz tidynet-nikki $feed_url"
-  grep -Fqx "$feed_line" /etc/opkg/customfeeds.conf || printf '%s\n' "$feed_line" >> /etc/opkg/customfeeds.conf
- elif [ -x /usr/bin/apk ]; then
-  mkdir -p /etc/apk/keys /etc/apk/repositories.d
-  curl --fail --location --silent --show-error --retry 3 --connect-timeout 10 --max-time 60 --max-filesize 32768 --proto '=https' https://nikkinikki.pages.dev/public-key.pem -o "$key_file" || { error_message='下载 Nikki 软件源签名密钥失败，请检查网络连接。'; return 1; }
-  install -m 0644 "$key_file" /etc/apk/keys/tidynet-nikki.pem || { rm -f "$key_file"; return 1; }
-  rm -f "$key_file"
-  repo_line="$feed_url/packages.adb"
-  touch /etc/apk/repositories.d/customfeeds.list
-  grep -Fqx "$repo_line" /etc/apk/repositories.d/customfeeds.list || printf '%s\n' "$repo_line" >> /etc/apk/repositories.d/customfeeds.list
- else
-  error_message='未检测到 opkg 或 apk 软件包管理器。'; return 1
- fi
+
+download_core() {
+	local release tag arch asset_names idx name wanted digest url archive candidate actual was_running=0
+	command -v curl >/dev/null 2>&1 && command -v sha256sum >/dev/null 2>&1 || { error_message='缺少 curl 或 sha256sum；请检查 ImmortalWrt 基础依赖。'; return 1; }
+	case "$(uname -m)" in
+		x86_64) arch=amd64-compatible;;
+		aarch64|arm64) arch=arm64;;
+		armv7l|armv7*) arch=armv7;;
+		*) error_message="暂不支持设备架构 $(uname -m)。"; return 1;;
+	esac
+	release=$(curl --fail --location --silent --show-error --connect-timeout 10 --max-time 45 --max-filesize 4194304 --proto '=https' --proto-redir '=https' -H 'Accept: application/vnd.github+json' -H 'User-Agent: TidyNet' 'https://api.github.com/repos/MetaCubeX/mihomo/releases/latest') || { error_message='读取 Mihomo 官方发布信息失败。'; return 1; }
+	tag=$(jget "$release" '@.tag_name')
+	case "$tag" in v[0-9]*.[0-9]*.[0-9]*) ;; *) error_message='Mihomo 官方发布信息中的版本号无效。'; return 1;; esac
+	wanted="mihomo-linux-$arch-$tag.gz"
+	asset_names=$(jget "$release" '@.assets[*].name')
+	idx=0; name=''; digest=''; url=''
+	while IFS= read -r name; do
+		if [ "$name" = "$wanted" ]; then
+			digest=$(jget "$release" "@.assets[$idx].digest")
+			url=$(jget "$release" "@.assets[$idx].browser_download_url")
+			break
+		fi
+		idx=$((idx+1))
+	done <<EOF
+$asset_names
+EOF
+	case "$digest" in sha256:[0-9a-fA-F][0-9a-fA-F]*) ;; *) error_message='发布页没有可验证的 SHA-256 摘要，已拒绝安装。'; return 1;; esac
+	case "$url" in https://github.com/MetaCubeX/mihomo/releases/download/*) ;; *) error_message='发布页返回了非官方核心下载地址。'; return 1;; esac
+	digest=${digest#sha256:}
+	archive="$TN_HOME/download/$wanted"
+	candidate="$TN_HOME/download/tidynet-mihomo.new"
+	curl --fail --location --silent --show-error --retry 3 --connect-timeout 10 --max-time 600 --max-filesize 100000000 --proto '=https' --proto-redir '=https' "$url" -o "$archive" || { rm -f "$archive"; error_message='下载 Mihomo 核心失败。'; return 1; }
+	actual=$(sha256sum "$archive" | awk '{print $1}')
+	[ "$actual" = "$digest" ] || { rm -f "$archive"; error_message='Mihomo 核心 SHA-256 校验失败，文件未安装。'; return 1; }
+	if command -v gzip >/dev/null 2>&1; then gzip -dc "$archive" > "$candidate" || { rm -f "$archive" "$candidate"; error_message='解压 Mihomo 核心失败。'; return 1; }
+	else rm -f "$archive"; error_message='系统缺少 gzip，无法解压 Mihomo 核心。'; return 1; fi
+	chmod 755 "$candidate" || return 1
+	"$candidate" -v >/dev/null 2>&1 || { rm -f "$archive" "$candidate"; error_message='下载的文件不能运行，已拒绝安装。'; return 1; }
+	if pidof tidynet-mihomo >/dev/null 2>&1; then
+		was_running=1
+		"$TN_INIT/tidynet" stop || { rm -f "$archive" "$candidate"; error_message='停止 TidyNet 服务失败，未替换核心。'; return 1; }
+	fi
+	mv -f "$candidate" "$TN_CORE" || { rm -f "$archive"; error_message='替换 Mihomo 核心失败。'; return 1; }
+	chmod 755 "$TN_CORE"
+	set_config main.core_version "$tag" || { error_message='核心已安装，但版本记录未能保存。'; return 1; }
+	rm -f "$archive"
+	if [ "$was_running" = 1 ]; then "$TN_INIT/tidynet" start || { error_message='核心已更新，但服务启动失败。请检查配置校验日志。'; return 1; }; fi
+	message="Mihomo 核心 $tag 已下载并校验安装。"
 }
-install_runtime_dependencies() {
- if [ -x /bin/opkg ]; then
-  opkg update >/dev/null 2>&1 || { error_message='系统软件源更新失败。'; return 1; }
-  if opkg list-installed mihomo-alpha 2>/dev/null | grep -q '^mihomo-alpha '; then core_package=mihomo-alpha
-  else core_package=mihomo-meta; fi
-  opkg install ca-bundle curl adblock-fast "$core_package" nikki luci-app-nikki >/dev/null 2>&1 || { error_message='运行组件安装失败，请检查设备架构、软件源空间和 Nikki 软件源状态。'; return 1; }
- elif [ -x /usr/bin/apk ]; then
-  apk update >/dev/null 2>&1 || { error_message='系统软件源更新失败。'; return 1; }
-  if apk info -e mihomo-alpha >/dev/null 2>&1; then core_package=mihomo-alpha
-  else core_package=mihomo-meta; fi
-  apk add ca-bundle curl adblock-fast "$core_package" nikki luci-app-nikki >/dev/null 2>&1 || { error_message='运行组件安装失败，请检查设备架构、软件源空间和 Nikki 软件源状态。'; return 1; }
- else
-  error_message='未检测到 opkg 或 apk 软件包管理器。'; return 1
- fi
+
+update_subscription() {
+	local id=$section url target temp old_profile
+	is_section tidynet "$id" subscription || { error_message='订阅不存在。'; return 1; }
+	url=$(get "tidynet.$id.url"); is_url "$url" || { error_message='订阅 URL 无效。'; return 1; }
+	target="$TN_HOME/profiles/$id.yaml"; temp="$TN_HOME/download/$id.yaml.new"
+	curl --fail --location --silent --show-error --retry 2 --connect-timeout 10 --max-time 180 --max-filesize 20971520 --proto '=https' --proto-redir '=https' "$url" -o "$temp" || { rm -f "$temp"; error_message='订阅下载失败。'; return 1; }
+	[ -s "$temp" ] || { rm -f "$temp"; error_message='订阅内容为空。'; return 1; }
+	[ -x "$TN_CORE" ] || { rm -f "$temp"; error_message='请先下载 Mihomo 核心。'; return 1; }
+	"$TN_CORE" -t -d "$TN_HOME/runtime" -f "$temp" >/dev/null 2>&1 || { rm -f "$temp"; error_message='订阅不是有效的完整 Mihomo/Clash YAML 配置，现有订阅未更改。'; return 1; }
+	if grep -Eq "^[[:space:]]*external-controller:[[:space:]]*[\"']?(0\\.0\\.0\\.0|\\[::\\]|:|[0-9]{1,3}(\\.[0-9]{1,3}){3}):" "$temp"; then
+		rm -f "$temp"; error_message='订阅把 Mihomo 控制器绑定到非本机地址，TidyNet 已拒绝应用以避免暴露控制接口。'; return 1
+	fi
+	chmod 600 "$temp"
+	if [ -f "$target" ]; then cp -p "$target" "$target.bak" || { rm -f "$temp"; error_message='无法备份现有订阅。'; return 1; }; fi
+	mv -f "$temp" "$target" || { error_message='保存订阅文件失败。'; return 1; }
+	set_config "$id.updated" "$(date '+%Y-%m-%d %H:%M:%S')" || { error_message='订阅已保存，但更新时间未写入。'; return 1; }
+	if [ "$operation" = subscription-use ]; then
+		old_profile=$(get tidynet.main.profile)
+		set_config main.profile "$id" || { error_message='无法切换当前订阅。'; return 1; }
+		if [ "$(get tidynet.main.enabled)" = 1 ]; then
+			"$TN_INIT/tidynet" reload || {
+				set_config main.profile "$old_profile" >/dev/null 2>&1
+				[ -z "$old_profile" ] || "$TN_INIT/tidynet" reload >/dev/null 2>&1
+				[ -f "$target.bak" ] && mv -f "$target.bak" "$target"
+				error_message='订阅已切换但 Mihomo 启动失败；已尝试恢复之前的配置。'; return 1
+			}
+		fi
+		message='订阅已更新并设为当前配置。'
+	else message='订阅配置已下载并通过 Mihomo 校验。'; fi
+	[ -f "$target.bak" ] && rm -f "$target.bak"
 }
-update_mihomo_core() {
- local was_running=0
- if [ -x /bin/opkg ]; then
-  if opkg list-installed mihomo-alpha 2>/dev/null | grep -q '^mihomo-alpha '; then core_package=mihomo-alpha
-  else core_package=mihomo-meta; fi
- elif [ -x /usr/bin/apk ]; then
-  if apk info -e mihomo-alpha >/dev/null 2>&1; then core_package=mihomo-alpha
-  else core_package=mihomo-meta; fi
- else error_message='未检测到 opkg 或 apk 软件包管理器。'; return 1; fi
- if pidof mihomo >/dev/null 2>&1 && [ -x "$TN_INIT/nikki" ]; then
-  was_running=1
-  run_service nikki stop || { error_message='无法安全停止 Mihomo；未更新核心。'; return 1; }
- fi
- if [ -x /bin/opkg ]; then
-  opkg update >/dev/null 2>&1 || { error_message='软件源更新失败，Mihomo 核心未更新。'; rc=1; }
-  if [ "$rc" = 0 ]; then
-   if opkg list-installed "$core_package" 2>/dev/null | grep -q "^$core_package "; then
-    opkg upgrade "$core_package" >/dev/null 2>&1 || { error_message='Mihomo 核心更新失败。'; rc=1; }
-   else opkg install "$core_package" >/dev/null 2>&1 || { error_message='Mihomo 核心下载或安装失败。'; rc=1; }; fi
-  fi
- elif [ -x /usr/bin/apk ]; then
-  apk update >/dev/null 2>&1 || { error_message='软件源更新失败，Mihomo 核心未更新。'; rc=1; }
-  if [ "$rc" = 0 ]; then
-   if apk info -e "$core_package" >/dev/null 2>&1; then
-    apk upgrade "$core_package" >/dev/null 2>&1 || { error_message='Mihomo 核心更新失败。'; rc=1; }
-   else apk add "$core_package" >/dev/null 2>&1 || { error_message='Mihomo 核心下载或安装失败。'; rc=1; }; fi
-  fi
- else error_message='未检测到 opkg 或 apk 软件包管理器。'; rc=1; fi
- if [ "$was_running" = 1 ]; then run_service nikki start || { error_message='核心操作后 Nikki 未能重新启动，请检查配置。'; rc=1; }; fi
- [ "$rc" = 0 ]
+
+update_rule_source() {
+	local id=$section url format raw out action suffix
+	is_section tidynet "$id" rule_source || { error_message='规则源不存在。'; return 1; }
+	[ "$(get "tidynet.$id.enabled")" = 1 ] || { error_message='此规则源已停用。'; return 1; }
+	url=$(get "tidynet.$id.url"); format=$(get "tidynet.$id.format"); action=$(get "tidynet.$id.action"); is_url "$url" || { error_message='规则源 URL 无效。'; return 1; }
+	case "$format" in hosts|domains) ;; *) error_message='当前仅支持 hosts 或纯域名格式规则源。'; return 1;; esac
+	case "$action" in allow) suffix=allow;; *) suffix=block;; esac
+	raw="$TN_HOME/download/$id.raw"; out="$TN_HOME/download/$id.$suffix.domains.new"
+	curl --fail --location --silent --show-error --retry 2 --connect-timeout 10 --max-time 180 --max-filesize 20971520 --proto '=https' --proto-redir '=https' "$url" -o "$raw" || { rm -f "$raw"; error_message='广告规则下载失败。'; return 1; }
+	[ -s "$raw" ] || { rm -f "$raw"; error_message='规则源内容为空，旧规则已保留。'; return 1; }
+	awk '
+		{ sub(/\r$/, ""); sub(/#.*/, ""); if (NF == 0) next;
+		  if ($1 ~ /^[0-9.]+$/ || $1 == "::" || $1 == "::1") { for (i=2; i<=NF; i++) print tolower($i); }
+		  else if (NF == 1) print tolower($1); }
+	' "$raw" | while IFS= read -r domain; do is_domain "$domain" && printf '%s\n' "$domain"; done | sort -u > "$out"
+	[ -s "$out" ] || { rm -f "$raw" "$out"; error_message='没有解析到有效域名，旧规则已保留。'; return 1; }
+	[ "$(wc -l < "$out" | tr -d ' ')" -le 1000000 ] || { rm -f "$raw" "$out"; error_message='规则域名超过一百万条限制。'; return 1; }
+	chmod 600 "$out"; mv -f "$out" "$TN_HOME/rules/$id.$suffix.domains" || { rm -f "$raw"; error_message='保存规则文件失败。'; return 1; }
+	rm -f "$raw"
 }
+
+apply_adblock() {
+	local tmp_allow tmp_block hostfile id current original logqueries dnsmasq="/etc/init.d/dnsmasq" state_dir="$TN_HOME/state"
+	[ -z "$(uci -q changes dhcp 2>/dev/null)" ] || { error_message='dnsmasq 有尚未提交的设置，请先保存或撤销后重试。'; return 1; }
+	tmp_allow="$TN_HOME/download/allow.domains"
+	tmp_block="$TN_HOME/download/block.domains"
+	hostfile="$TN_HOME/rules/blocked.hosts"
+	if [ "$(get tidynet.main.adblock_enabled)" != 1 ]; then
+		uci -q del_list "dhcp.@dnsmasq[0].addnhosts=/etc/tidynet/rules/blocked.hosts"
+		if [ -f "$state_dir/logqueries-managed" ]; then
+			current=$(uci -q get 'dhcp.@dnsmasq[0].logqueries' 2>/dev/null)
+			original=$(cat "$state_dir/logqueries-original" 2>/dev/null)
+			if [ "$current" = 1 ]; then
+				if [ -n "$original" ]; then uci -q set "dhcp.@dnsmasq[0].logqueries=$original"
+				else uci -q delete 'dhcp.@dnsmasq[0].logqueries'; fi
+				uci -q commit dhcp
+			fi
+			rm -f "$state_dir/logqueries-managed" "$state_dir/logqueries-original"
+		fi
+		[ -x "$TN_INIT/tidynet-stats" ] && { "$TN_INIT/tidynet-stats" stop >/dev/null 2>&1; "$TN_INIT/tidynet-stats" disable >/dev/null 2>&1; }
+		uci -q commit dhcp
+		[ -x "$dnsmasq" ] && "$dnsmasq" reload >/dev/null 2>&1 || :
+		return 0
+	fi
+	: > "$tmp_allow"; : > "$tmp_block"
+	for id in $(sections tidynet rule_source); do
+		[ "$(get "tidynet.$id.enabled")" = 1 ] || continue
+		if [ "$(get "tidynet.$id.action")" = allow ]; then
+			cat "$TN_HOME/rules/$id.allow.domains" >> "$tmp_allow" 2>/dev/null || :
+		else
+			cat "$TN_HOME/rules/$id.block.domains" >> "$tmp_block" 2>/dev/null || :
+		fi
+	done
+	list_values tidynet main blocked_domains >> "$tmp_block"
+	list_values tidynet main allowed_domains >> "$tmp_allow"
+	sort -u "$tmp_allow" -o "$tmp_allow"
+	sort -u "$tmp_block" -o "$tmp_block"
+	awk 'FILENAME == ARGV[1] {allow[$0]=1; next} !($0 in allow) {print "0.0.0.0 " $0}' "$tmp_allow" "$tmp_block" > "$hostfile.new" || return 1
+	[ -s "$hostfile.new" ] || {
+		rm -f "$hostfile.new"
+		set_config main.adblock_enabled 0 >/dev/null 2>&1
+		error_message='没有可应用的拦截域名；广告过滤已保持关闭。'; return 1;
+	}
+	chmod 644 "$hostfile.new" && mv -f "$hostfile.new" "$hostfile" || return 1
+	current=$(uci -q get 'dhcp.@dnsmasq[0].addnhosts' 2>/dev/null)
+	case "$current" in *"/etc/tidynet/rules/blocked.hosts"*) ;; *) uci -q add_list "dhcp.@dnsmasq[0].addnhosts=/etc/tidynet/rules/blocked.hosts" || return 1;; esac
+	mkdir -p "$state_dir"; chmod 700 "$state_dir"
+	if [ ! -f "$state_dir/logqueries-managed" ]; then
+		uci -q get 'dhcp.@dnsmasq[0].logqueries' > "$state_dir/logqueries-original" 2>/dev/null || :
+		touch "$state_dir/logqueries-managed"
+	fi
+	uci -q set 'dhcp.@dnsmasq[0].logqueries=1' || return 1
+	uci -q commit dhcp || return 1
+	[ -x "$dnsmasq" ] && "$dnsmasq" reload >/dev/null 2>&1 || "$dnsmasq" restart >/dev/null 2>&1 || return 1
+	"$TN_INIT/tidynet-stats" enable >/dev/null 2>&1 && "$TN_INIT/tidynet-stats" restart >/dev/null 2>&1 || { error_message='过滤已配置，但 TidyNet 请求统计服务启动失败。'; return 1; }
+	rm -f "$tmp_allow" "$tmp_block"
+}
+
+apply_dns() {
+	local state_dir="$TN_HOME/state" current original dnsmasq='/etc/init.d/dnsmasq' server='/#/127.0.0.1#10535'
+	[ -z "$(uci -q changes dhcp 2>/dev/null)" ] || { error_message='dnsmasq 有尚未提交的设置，请先保存或撤销后重试。'; return 1; }
+	rollback_dns_enable() {
+		set_config main.dns_enabled 0 >/dev/null 2>&1
+		uci -q del_list "dhcp.@dnsmasq[0].server=$server"
+		current=$(uci -q get 'dhcp.@dnsmasq[0].noresolv' 2>/dev/null)
+		original=$(cat "$state_dir/dns-noresolv-original" 2>/dev/null)
+		if [ "$current" = 1 ]; then
+			if [ -n "$original" ]; then uci -q set "dhcp.@dnsmasq[0].noresolv=$original"
+			else uci -q delete 'dhcp.@dnsmasq[0].noresolv'; fi
+		fi
+		uci -q commit dhcp
+		rm -f "$state_dir/dns-noresolv-managed" "$state_dir/dns-noresolv-original"
+		if [ "$(get tidynet.main.enabled)" = 1 ]; then "$TN_INIT/tidynet" restart >/dev/null 2>&1
+		else "$TN_INIT/tidynet" disable >/dev/null 2>&1; "$TN_INIT/tidynet" stop >/dev/null 2>&1; fi
+		"$dnsmasq" restart >/dev/null 2>&1 || :
+	}
+	if [ "$(get tidynet.main.dns_enabled)" = 1 ]; then
+		[ -x "$TN_CORE" ] || { error_message='请先下载 Mihomo 核心，再启用 TidyNet DNS。'; return 1; }
+		render_dns_config || { error_message='DNS 上游或配置格式无效，未应用。'; return 1; }
+		mkdir -p "$state_dir"; chmod 700 "$state_dir"
+		if [ ! -f "$state_dir/dns-noresolv-managed" ]; then
+			uci -q get 'dhcp.@dnsmasq[0].noresolv' > "$state_dir/dns-noresolv-original" 2>/dev/null || :
+			touch "$state_dir/dns-noresolv-managed"
+		fi
+		"$TN_INIT/tidynet" enable >/dev/null 2>&1 && "$TN_INIT/tidynet" restart >/dev/null 2>&1 || { rollback_dns_enable; error_message='TidyNet DNS 核心启动失败，已撤销 DNS 接入。'; return 1; }
+		current=$(uci -q get 'dhcp.@dnsmasq[0].server' 2>/dev/null)
+		case "$current" in *"$server"*) ;; *) uci -q add_list "dhcp.@dnsmasq[0].server=$server" || { rollback_dns_enable; error_message='写入 dnsmasq 上游配置失败，已撤销 DNS 接入。'; return 1; };; esac
+		uci -q set 'dhcp.@dnsmasq[0].noresolv=1' && uci -q commit dhcp || { rollback_dns_enable; error_message='写入 dnsmasq 上游配置失败，已撤销 DNS 接入。'; return 1; }
+		"$dnsmasq" restart >/dev/null 2>&1 || { rollback_dns_enable; error_message='dnsmasq 重载失败，已撤销 TidyNet DNS 接入。'; return 1; }
+		message='TidyNet DNS 已接入 dnsmasq，LAN 客户端的上游解析将经过 Mihomo DNS。'
+	else
+		uci -q del_list "dhcp.@dnsmasq[0].server=$server"
+		if [ -f "$state_dir/dns-noresolv-managed" ]; then
+			current=$(uci -q get 'dhcp.@dnsmasq[0].noresolv' 2>/dev/null)
+			original=$(cat "$state_dir/dns-noresolv-original" 2>/dev/null)
+			if [ "$current" = 1 ]; then
+				if [ -n "$original" ]; then uci -q set "dhcp.@dnsmasq[0].noresolv=$original"
+				else uci -q delete 'dhcp.@dnsmasq[0].noresolv'; fi
+				uci -q commit dhcp
+			fi
+			rm -f "$state_dir/dns-noresolv-managed" "$state_dir/dns-noresolv-original"
+		fi
+		uci -q commit dhcp
+		if [ "$(get tidynet.main.enabled)" = 1 ]; then
+			"$TN_INIT/tidynet" restart >/dev/null 2>&1 || { error_message='DNS 已从 dnsmasq 移除，但代理服务重载失败。'; return 1; }
+		else
+			"$TN_INIT/tidynet" disable >/dev/null 2>&1
+			"$TN_INIT/tidynet" stop >/dev/null 2>&1
+		fi
+		"$dnsmasq" restart >/dev/null 2>&1 || { error_message='DNS 上游已恢复，但 dnsmasq 重启失败。'; return 1; }
+		message='TidyNet DNS 已关闭，并已撤销自身添加的 dnsmasq 上游配置。'
+	fi
+}
+
 case "$operation" in
- dependencies-install)
-  if setup_nikki_feed && install_runtime_dependencies; then message='运行组件已安装或更新。'; else rc=1; fi;;
- mihomo-core-update)
-  if setup_nikki_feed && update_mihomo_core; then message='Mihomo 核心已下载或更新。'; else rc=1; fi;;
- subscription-update|subscription-use)
-  if ! is_section nikki "$section" subscription; then rc=1
-  else
-   set_config nikki "$section.success" 0 && run_service nikki update_subscription "$section" || rc=1
-   [ "$(get "nikki.$section.success")" = 1 ] || rc=1
-   if [ "$rc" = 0 ] && [ "$operation" = subscription-use ]; then
-    set_config nikki config.profile "subscription:$section" || rc=1
-    if [ "$rc" = 0 ] && [ "$(get nikki.config.enabled)" = 1 ]; then run_service nikki reload || rc=1; fi
-   fi
-  fi
-  message='订阅已更新。';;
- mihomo-start)
-  set_config nikki config.enabled 1 && "$TN_INIT/nikki" enable && run_service nikki start || rc=1;;
- mihomo-stop)
-  set_config nikki config.enabled 0 && run_service nikki stop || rc=1;;
- mihomo-reload)
-  if [ "$(get nikki.config.enabled)" = 1 ]; then run_service nikki reload || rc=1
-  else message='配置已保存；Mihomo 未启用，未自动启动。'; fi;;
- adblock-start)
-  set_config adblock-fast config.enabled 1 && "$TN_INIT/adblock-fast" enable && run_service adblock-fast start || rc=1;;
- adblock-stop)
-  set_config adblock-fast config.enabled 0 && run_service adblock-fast stop || rc=1;;
- adblock-update) run_service adblock-fast dl || rc=1;;
- adblock-reload)
-  if [ "$(get adblock-fast.config.enabled)" = 1 ]; then run_service adblock-fast reload || rc=1
-  else message='规则已保存；广告过滤未启用，未自动启动。'; fi;;
- *) rc=1;;
+	mihomo-core-update) download_core || rc=1;;
+	mihomo-start) "$TN_INIT/tidynet" enable && "$TN_INIT/tidynet" restart || rc=1; message='TidyNet Mihomo 服务已启动。';;
+	mihomo-stop)
+		if [ "$(get tidynet.main.dns_enabled)" = 1 ]; then "$TN_INIT/tidynet" restart || rc=1
+		else "$TN_INIT/tidynet" disable >/dev/null 2>&1; "$TN_INIT/tidynet" stop || rc=1; fi
+		message='TidyNet Mihomo 代理服务已停止。';;
+	mihomo-reload) "$TN_INIT/tidynet" reload || rc=1; message='TidyNet Mihomo 配置已重载。';;
+	dns-reload) apply_dns || rc=1;;
+	subscription-update|subscription-use) update_subscription || rc=1;;
+	adblock-update)
+		if [ -n "$section" ]; then update_rule_source || rc=1
+		else for section in $(sections tidynet rule_source); do
+			[ "$(get "tidynet.$section.enabled")" = 1 ] || continue
+			update_rule_source || rc=1
+		done; fi
+		if [ "$rc" = 0 ]; then
+			apply_adblock || rc=1
+		elif [ "$(get tidynet.main.adblock_enabled)" = 1 ] && [ ! -s "$TN_HOME/rules/blocked.hosts" ]; then
+			set_config main.adblock_enabled 0 >/dev/null 2>&1
+			"$TN_INIT/tidynet-stats" stop >/dev/null 2>&1 || :
+			"$TN_INIT/tidynet-stats" disable >/dev/null 2>&1 || :
+			error_message='广告规则下载失败，尚无可用的旧规则；已自动关闭过滤，避免显示为已启用但实际没有规则。'
+		fi
+		[ "$rc" = 0 ] && date '+%Y-%m-%d %H:%M:%S' > "$TN_RUN/rules-updated"
+		message='TidyNet 广告规则已更新。';;
+	adblock-start|adblock-stop|adblock-reload|rules-reload)
+		apply_adblock || rc=1
+		message='广告规则状态已更新。';;
+	*) rc=1; error_message='不支持的后台操作。';;
 esac
-case "$operation" in adblock-update)
- if [ "$rc" = 0 ]; then
-  attempt=0; state=''
-  while [ "$attempt" -lt 120 ]; do
-   data=$(ubus -t 3 call service list '{"name":"adblock-fast"}' 2>/dev/null)
-   state=$(jget "$data" '@.*.data.status')
-   case "$state" in
-    statusSuccess) break;;
-    statusFail*|statusError*|statusStopped|'') rc=1; break;;
-   esac
-   attempt=$((attempt+1)); sleep 2
-  done
-  [ "$state" = statusSuccess ] || rc=1
-  [ "$rc" = 0 ] && date '+%Y-%m-%d %H:%M:%S' > "$TN_RUN/adblock-updated"
- fi;;
-esac
+
 if [ "$rc" = 0 ]; then job_record "$operation" success "$message"
 else job_record "$operation" error "$error_message"; fi
 exit "$rc"
-

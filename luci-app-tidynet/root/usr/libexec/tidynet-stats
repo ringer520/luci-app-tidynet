@@ -1,0 +1,40 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+BASE=/etc/tidynet
+STATE="$BASE/stats"
+HOSTS="$BASE/rules/blocked.hosts"
+PIDFILE=/tmp/tidynet/stats.pid
+mkdir -p "$STATE"
+chmod 700 "$STATE"
+mkdir -p /tmp/tidynet
+printf '%s\n' "$$" > "$PIDFILE"
+trap 'rm -f "$PIDFILE"' EXIT HUP INT TERM
+[ -s "$STATE/queries" ] || printf '0\n' > "$STATE/queries"
+[ -s "$STATE/blocked" ] || printf '0\n' > "$STATE/blocked"
+
+logread -f 2>/dev/null | awk -v hosts="$HOSTS" -v state="$STATE" '
+function flush(   tmp) {
+	if (total == saved_total && blocked_total == saved_blocked) return
+	tmp = state "/queries.new"; print total > tmp; close(tmp); system("mv " tmp " " state "/queries")
+	tmp = state "/blocked.new"; print blocked_total > tmp; close(tmp); system("mv " tmp " " state "/blocked")
+	saved_total = total; saved_blocked = blocked_total
+}
+BEGIN {
+	while ((getline line < (state "/queries")) > 0) total = line + 0; close(state "/queries")
+	while ((getline line < (state "/blocked")) > 0) blocked_total = line + 0; close(state "/blocked")
+	saved_total = total; saved_blocked = blocked_total
+	while ((getline line < hosts) > 0) if (line ~ /^0\.0\.0\.0[ \t]+/) { split(line, parts, /[ \t]+/); blocked[tolower(parts[2])] = 1 }
+	close(hosts); last_flush = systime()
+}
+{
+	for (i = 1; i <= NF; i++) if ($i ~ /^query\[/) {
+		domain = tolower($(i + 1)); sub(/\.$/, "", domain)
+		total++
+		if (domain in blocked) blocked_total++
+		break
+	}
+	if (systime() - last_flush >= 5) { flush(); last_flush = systime() }
+}
+END { flush() }
+'

@@ -1,50 +1,63 @@
-# 架构与接口
+# TidyNet 独立版架构基线
 
-## 运行结构
+本地开发版 0.4.0 已从 Nikki/adblock-fast/AdGuard Home 的运行时绑定切换到 TidyNet 自有服务和配置。本文说明当前实现、剩余工作及 ImmortalWrt 24.10 的验收标准。当前代码尚未在目标路由器上构建和实机验证。
 
-LuCI 页面只调用 rpcd 注册的 `tidynet` 对象。rpcd 的 shell 入口调用 `core.sh`，通过 OpenWrt 的 UCI、ubus、init.d 和 jshn 接口读取状态或执行固定操作。慢任务由 `tidynet-job` 在后台执行，任务状态原子写入 `/tmp/tidynet/job.json`。
+## 产品边界
 
-| 组件 | 职责 |
+TidyNet 直接提供 LuCI 首页、配置管理、Mihomo 服务控制、DNS 集成、广告规则管理与统计。运行时不安装、读取、配置或调用 Nikki、adblock-fast、AdGuard Home。ImmortalWrt 原有的 dnsmasq、DHCP、firewall4 属于系统服务，TidyNet 只通过明确启用和可逆配置与 dnsmasq 协作。
+
+Mihomo 是 TidyNet 管理的独立核心。用户在首页明确触发下载或更新；设备按 CPU 架构从 Mihomo 官方 GitHub Release 获取 gzip 核心，要求 API 提供 SHA-256 digest，校验后才替换 `/usr/bin/tidynet-mihomo`。安装 LuCI IPK 不会自动下载大型核心、启动代理或接管 DNS。
+
+## 当前代码结构
+
+| 部件 | 职责 |
 | --- | --- |
-| `htdocs/.../home.js`、`home.css` | 中文首页、订阅/规则/DNS 控件、状态轮询 |
-| `root/usr/libexec/rpcd/tidynet` | rpcd 协议入口及 ACL 对应的方法列表 |
-| `root/usr/lib/tidynet/core.sh` | JSON、状态读取、校验、UCI 暂存、统计及后台任务派发 |
-| `root/usr/libexec/tidynet-job` | 固定服务命令白名单和任务结果确认 |
-| `/etc/config/tidynet` | 面板地址和可选 AdGuard Home 本机接口配置 |
+| `htdocs/.../home.js`、`home.css` | 首页核心操作、订阅、代理策略切换、DNS、规则源、统计、任务反馈 |
+| `/etc/config/tidynet` | TidyNet 自有配置；订阅和规则源 URL 不返回浏览器 |
+| `/etc/init.d/tidynet` | procd 管理 Mihomo 代理进程和独立 DNS 进程 |
+| `/etc/init.d/tidynet-stats` | 广告过滤启用时管理 dnsmasq 查询计数监听进程 |
+| `root/usr/libexec/rpcd/tidynet` | LuCI RPC 入口及读/写调用锁 |
+| `root/usr/lib/tidynet/core.sh` | 状态、输入校验、配置提交、RPC 统计和后台任务派发 |
+| `root/usr/libexec/tidynet-job` | 核心安装、订阅校验、规则下载、dnsmasq 可逆接入 |
+| `root/usr/libexec/tidynet-stats` | 消费本机 dnsmasq 查询日志，只持久保存聚合查询计数 |
+| `/etc/tidynet/` | 核心数据、订阅、DNS 配置和过滤规则的本地存储 |
 
-## rpcd 方法
+安装依赖由 ImmortalWrt 24.10 包管理器处理，包含 LuCI/rpcd、libubox/libubus、JSON 工具、curl、CA、gzip 和 SHA-256 工具。Mihomo 不作为 Nikki feed 中的软件包安装，也不会运行远端安装脚本。CI 仍只构建 ImmortalWrt 24.10.6 SDK。
 
-- `status {}`：返回 Nikki/Mihomo 运行状态、隐藏订阅地址后的订阅元数据、adblock-fast 域名/规则源数量、DNS 状态及当前任务。
-- `settings {}`：返回当前面板地址、DNS 上游组、广告规则源元数据及自定义域名。订阅 URL、规则源 URL、AdGuard Home 密码均不返回。
-- `stats {}`：关闭时返回 `connected=false`；启用时用回环地址请求 AdGuard Home `/control/stats`，返回查询/过滤拦截数、其统计窗口和历史序列。
-- `configure { payload: JSON-string }`：仅接受订阅、规则源、自定义域名、DNS 上游或本插件连接设置的编辑和删除操作。
-- `action { operation, section }`：仅接受 Nikki 启停/重载、已配置订阅更新、adblock-fast 启停/更新/重载、依赖安装和 Mihomo 核心更新操作。
-- `resolve { domain }`：验证完整域名后，通过 `timeout` 和 `nslookup` 向路由器 `127.0.0.1:53` 发起一次查询，最多返回 4 KiB 输出。
+## 首页操作
 
-ACL 将状态、设置和统计方法授予 LuCI 读取权限；配置写入与服务操作另外授权。接口不提供通用 shell、UCI 命令、文件读取或 URL 抓取功能。
+- **核心**：从 Mihomo 官方发布页下载/更新；显示安装版本和运行状态；支持启动、停止和重载。服务默认不启动，用户显式启动后才加入开机启动。
+- **订阅**：首页新增、编辑、删除、更新和切换；第一版仅支持完整 Clash/Mihomo YAML，不支持 URI/Base64 代理链接。URL 保存在 TidyNet UCI 中，状态接口不返回 URL；下载配置先经 Mihomo `-t` 校验。远端配置如将 Mihomo 控制器绑定到非本机地址会被拒绝。
+- **代理策略**：首页读取当前 Mihomo 配置的代理组，通过 TidyNet 后端访问 `127.0.0.1` / `localhost` 控制器；可在首页切换组内节点。控制器密钥只在路由器本机从当前配置读取，不传给浏览器；策略选择还会由后端确认目标节点确属该组。Mihomo 官方接口通过 `GET /proxies` 列出代理组，使用 `PUT /proxies/{name}` 选择节点。[Mihomo API 文档](https://wiki.metacubex.one/en/api/)
+- **广告过滤**：支持 hosts/纯域名格式的拦截源和允许源、自定义允许/拦截域名；下载和解析成功后才替换规则。dnsmasq 读取 TidyNet 生成的 hosts 文件，允许域名优先于拦截域名。仅使用路由器 DNS 的客户端会被过滤；客户端自带 DoH/DoT 可绕过路由器过滤。
+- **DNS**：由一个独立 Mihomo 实例监听 `127.0.0.1:10535`，dnsmasq 仍监听系统 53 端口并服务 LAN/DHCP。使用 10535 避开常见代理配置的 1053 DNS 端口。用户启用 TidyNet DNS 后，dnsmasq 全局上游转发到该独立端口；停用时只移除 TidyNet 添加的上游值并尝试恢复之前的 `noresolv`。fake-ip/real-ip、IPv6 和上游写入 TidyNet 自己生成的 DNS 配置。
+- **统计**：启用广告过滤后，TidyNet 打开 dnsmasq 查询日志，并统计 DNS 查询总量及命中当前阻断表的请求量。首页同时显示加载的阻断域名数和启用规则源数；规则数量不会替代请求计数。计数为本地持久累计值，关闭过滤期间不累计。
+- **面板和解析测试**：首页提供外部 WebUI 链接设置、状态刷新和路由器本机解析测试。外部控制 API 的网络暴露由 WebUI/用户配置负责；TidyNet 不自动把未认证控制 API 暴露到 LAN。
 
-## 配置和任务安全
+## 配置安全与回滚
 
-写入请求限制为 24 KiB。URL 只允许 HTTP(S) 且最长 4 KiB；域名字段逐行校验，每组不超过 300 项、总长不超过 16 KiB。RPC 用户数据作为参数传递给 UCI，不会拼接成可执行 shell 语句。DNS 上游限制长度和字符集。名称服务器只允许编辑 Nikki 已存在的 `nameserver` 匿名/命名节。
+- RPC 只接受窄范围状态、设置和白名单操作，不提供任意 shell、UCI 命令、文件路径或通用 URL 下载接口。
+- Mihomo 核心、订阅和规则均先写入暂存文件；限制大小并校验摘要、内容格式或 Mihomo 配置，通过后原子替换。URL/域名/名称/端口/列表数量均由后端校验。
+- DNS 和广告接入仅写入 dnsmasq 的 `server`、`noresolv`、`addnhosts`、`logqueries` 相关值。TidyNet 保存自己接入前的 `noresolv` / `logqueries` 值；停用和卸载时尝试移除自己增加的列表项并恢复原值，不删除其它 server/addnhosts 项。
+- 为统计而启用 `logqueries` 会让系统本机日志短暂包含查询域名和来源地址；TidyNet 持久存储的是聚合计数。首页启用前会提示这一点。logread 的实际保留策略由 ImmortalWrt 系统配置决定。
+- 安装迁移会移除旧版 TidyNet 不再使用的 AdGuard Home 凭据并补齐新配置字段；旧版 TidyNet 默认 DNS 端口 1053 会迁移到 10535。不会删除 Nikki 的旧 UCI 配置或订阅数据。
 
-修改先写入请求专用的 UCI delta 文件，再提交指定包；如果包内存在尚未提交的其他 UCI 修改，则拒绝写入，避免覆盖 LuCI 中待保存的内容。配置提交后才触发对应已启用服务的重载。长任务持有单一锁并写入状态文件，网页定时读取状态。失败时配置保留，页面显示失败结果；用户可以核对后端状态再重试。
+## 实施状态和验收
 
-Mihomo、Nikki 和 adblock-fast 命令路径固定在 `/etc/init.d`，命令名和动作使用白名单。服务命令最长执行 600 秒；规则下载状态最多观察 240 秒。任务状态不会包含订阅和规则源地址。AdGuard Home 密码只保存在 root-only 的本机 UCI 配置中，curl 从标准输入读取认证配置，并限制回环地址、协议、时间和响应大小。
+### 已完成的本地实现，待目标机验证
 
-## 独立安装与核心维护
+- 切断运行时代码对 Nikki、adblock-fast、AdGuard Home 的服务、UCI、ubus 调用。
+- 增加 TidyNet 自有 Mihomo procd 服务和按架构下载/摘要校验核心流程。
+- 首页管理核心、YAML 订阅、dnsmasq hosts 规则源、DNS 模式/上游和基础统计。
+- 广告规则允许表优先；DNS 与广告接入提供停用/卸载清理路径。
 
-TidyNet 包仅声明 LuCI、rpcd、libubus/libubox、jsonfilter、curl 和 CA 证书等基础依赖；Nikki、Mihomo 和 adblock-fast 由首页显式触发安装，避免用户必须先手动配置外部 feed。后台根据 `/etc/openwrt_release` 的 24.10、25.12 或 SNAPSHOT 版本及 `DISTRIB_ARCH` 选择 Nikki 官方 feed，下载其 feed 签名公钥，再交给 `opkg` 或 `apk` 校验并安装软件包。安装请求包含 Nikki、LuCI 页面、Mihomo 核心和 adblock-fast，具体系统依赖由包管理器解析。
+### 后续完善
 
-核心更新沿用已安装的 `mihomo-alpha` 变体，否则使用 `mihomo-meta`。若 Nikki 正在运行，先尝试停止、更新完成后再尝试启动；更新失败时页面显示失败状态。该流程不运行 Nikki 仓库提供的远端 shell 安装脚本，不会自动启用服务。
+1. **24.10.5 实机回归**：在 `192.168.1.8` 验证 `opkg` 依赖解析、24.10 x86_64 核心资产、UCI 的 list/noresolv/logqueries 行为、dnsmasq reload、procd 双实例、订阅切换回滚、统计日志格式和卸载清理。
+2. **统计增强**：当前提供累计总数，不提供小时/日趋势或重置控件；先验证日志计数准确性和资源开销，再增加窗口趋势与重置操作。
+3. **订阅增强**：当前不做 URI/Base64 转换；代理组节点切换已通过本机 API 集成，后续可增加节点延迟测试、连接列表和流量统计。
+4. **发布**：完成实机验证后，更新 24.10-only Actions 构建并发布 IPK、SHA256 和升级/卸载说明。若未来加入架构相关二进制，必须调整包架构和 24.10 构建矩阵。
 
-## 统计定义
+## 目标设备记录
 
-1. **加载规则域名**来自 adblock-fast 官方 rpcd 的 `entries` 字段；若其 Lua/ucode rpcd 方法不可用，则尝试其服务数据。该数字不是请求数或用户数。
-2. **拦截规则源**按 UCI 中已启用且 `action=block` 的 `file_url` 节数量计算。统计源配置，不代表全部下载/解析成功。
-3. **已拦截请求、查询量和趋势**只来自 AdGuard Home `/control/stats` 接口中的 `num_blocked_filtering`、`num_dns_queries` 与 `blocked_filtering`。按 `time_units` 标示 AdGuard Home 当前配置的统计窗口。没有该数据源时显示未接入，不推算、不用规则数量代替。
-4. **TidyNet 最近一次手动更新**保存在 `/tmp`，路由器重启后会清空；这不是 adblock-fast 的全局更新时间。
-
-## 手工检查清单
-
-部署到测试路由器后，逐项检查安装入口和 ACL、首页下载依赖、24.10/25.12/SNAPSHOT feed 映射、opkg/apk 签名验证和安装失败状态、核心首次下载/更新及 Nikki 重启、Nikki 未安装/运行/停止三种状态、订阅新增更新切换与删除、URL 留空编辑、adblock-fast 规则源和域名保存及回滚提示、规则下载后台成功/失败、adblock-fast 缺失时的退化界面、两种 DNS 模式及上游组、有效/无效解析诊断、AdGuard Home 正确凭据/错误凭据/服务离线、客户端真实 DNS 与广告拦截，以及路由器重启后的本机统计密码权限。不同 ImmortalWrt 版本、Nikki/adblock-fast release、DNS 拓扑和 WebUI 访问路径均需实机复核。
-
+用户路由器为 ImmortalWrt 24.10.5 x86_64。此前诊断到 0.3.0 已安装，Mihomo、Nikki、adblock-fast 均未安装；既有 Nikki 订阅属于遗留外部 UCI。该次设备检查只读取状态，没有安装包或改写配置。0.4.0 尚未上传或在该设备部署。

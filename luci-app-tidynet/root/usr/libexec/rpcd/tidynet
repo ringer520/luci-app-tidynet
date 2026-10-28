@@ -3,7 +3,7 @@
 . /usr/lib/tidynet/core.sh
 case "$1" in
  list)
-  printf '%s\n' '{"status":{},"settings":{},"stats":{},"configure":{"payload":"String"},"action":{"operation":"String","section":"String"},"resolve":{"domain":"String"}}';;
+  printf '%s\n' '{"status":{},"settings":{},"stats":{},"proxy_status":{},"proxy_select":{"group":"String","member":"String"},"configure":{"payload":"String"},"action":{"operation":"String","section":"String"},"resolve":{"domain":"String"}}';;
  call)
   input=$(head -c 24577)
   [ "${#input}" -le 24576 ] || { error '请求过大。'; exit 0; }
@@ -11,14 +11,17 @@ case "$1" in
    status) status;;
    settings) settings;;
    stats) stats;;
+   proxy_status) proxy_status;;
    resolve) resolve "$(jget "$input" '@.domain')";;
-   configure|action)
+   configure|action|proxy_select)
     lock || { error '另一个任务正在进行，请稍后重试。'; exit 0; }
     TN_DETACHED=0
     trap '[ "$TN_DETACHED" = 1 ] || unlock' EXIT
-    if [ "$2" = configure ]; then configure_locked "$(jget "$input" '@.payload')"
-    else action_locked "$(jget "$input" '@.operation')" "$(jget "$input" '@.section')"; fi;;
+    case "$2" in
+     configure) configure_locked "$(jget "$input" '@.payload')";;
+     action) action_locked "$(jget "$input" '@.operation')" "$(jget "$input" '@.section')";;
+     proxy_select) proxy_select "$(jget "$input" '@.group')" "$(jget "$input" '@.member')";;
+    esac;;
    *) error '未知接口。';;
   esac;;
 esac
-
