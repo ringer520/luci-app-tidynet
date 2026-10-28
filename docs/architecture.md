@@ -22,7 +22,7 @@ Mihomo 是 TidyNet 管理的独立核心。用户在首页明确触发下载或�
 | `root/usr/libexec/tidynet-stats` | 消费本机 dnsmasq 查询日志，只持久保存聚合查询计数 |
 | `/etc/tidynet/` | 核心数据、订阅、DNS 配置和过滤规则的本地存储 |
 
-安装依赖由 ImmortalWrt 24.10 包管理器处理，包含 LuCI/rpcd、libubox/libubus、JSON 工具、curl、CA、gzip 和 SHA-256 工具。Mihomo 不作为 Nikki feed 中的软件包安装，也不会运行远端安装脚本。CI 仍只构建 ImmortalWrt 24.10.6 SDK。
+安装依赖由 ImmortalWrt 包管理器处理，包含 LuCI/rpcd、libubox/libubus、JSON 工具、curl、CA、gzip 和 SHA-256 工具。Mihomo 不作为 Nikki feed 中的软件包安装，也不会运行远端安装脚本。CI 构建 ImmortalWrt 24.10.6 与 25.12.2 x86/64 SDK；24.10 产出 IPK，25.12 产出 APK。
 
 ## 首页操作
 
@@ -56,7 +56,7 @@ Mihomo 是 TidyNet 管理的独立核心。用户在首页明确触发下载或�
 1. **24.10.5 实机回归**：在 `192.168.1.8` 验证 `opkg` 依赖解析、24.10 x86_64 核心资产、UCI 的 list/noresolv/logqueries 行为、dnsmasq reload、procd 双实例、订阅切换回滚、统计日志格式和卸载清理。
 2. **统计增强**：当前提供累计总数，不提供小时/日趋势或重置控件；先验证日志计数准确性和资源开销，再增加窗口趋势与重置操作。
 3. **订阅增强**：当前不做 URI/Base64 转换；代理组节点切换已通过本机 API 集成，后续可增加节点延迟测试、连接列表和流量统计。
-4. **发布**：完成实机验证后，更新 24.10-only Actions 构建并发布 IPK、SHA256 和升级/卸载说明。若未来加入架构相关二进制，必须调整包架构和 24.10 构建矩阵。
+4. **发布**：完成实机验证后，通过 Actions 发布 24.10 IPK 和 25.12 APK、SHA256 与升级/卸载说明。若未来加入架构相关二进制，必须调整包架构和 SDK 构建矩阵。
 
 ## 目标设备记录
 

@@ -25,6 +25,9 @@ jobs:
           - release: 24.10.6
             sdk: immortalwrt-sdk-24.10.6-x86-64_gcc-13.3.0_musl.Linux-x86_64.tar.zst
             sha256: 709bea2ce466b7ad671ce00fdcb1eb69b2b3fa0f0921b12b620725d95cd8c0e5
+          - release: 25.12.2
+            sdk: immortalwrt-sdk-25.12.2-x86-64_gcc-14.3.0_musl.Linux-x86_64.tar.zst
+            sha256: 4d4631f134c2f27215a91aa7ef5bf9a01ea96c2450d3b8a5c38048c32462ac60
     steps:
       - name: Check out TidyNet
         uses: actions/checkout@v4
@@ -105,7 +108,6 @@ jobs:
           body: |
             Automated TidyNet package build from commit ${{ github.sha }}.
 
-            Built with the ImmortalWrt 24.10.6 SDK as an architecture-independent IPK. Runtime dependencies must be available from the device's configured feeds.
+            Built with ImmortalWrt 24.10.6 and 25.12.2 x86/64 SDKs as architecture-independent packages. Runtime dependencies must be available from the device's configured feeds.
           files: dist/**/*
           fail_on_unmatched_files: true
-

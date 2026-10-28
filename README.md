@@ -11,7 +11,7 @@
 - 不安装、配置或调用 Nikki、adblock-fast、AdGuard Home。
 - LuCI 插件管理自身配置、服务与 DNS/广告规则流程；Mihomo 核心由首页显式下载和更新。
 - 首页可直接操作核心、订阅、DNS、广告规则与 Mihomo 代理策略组；策略切换通过路由器本机控制 API 完成。
-- 后续发布只构建 ImmortalWrt 24.10；当前 GitHub Actions 使用 ImmortalWrt 24.10.6 SDK。
+- GitHub Actions 同时构建 ImmortalWrt 24.10.6 和 25.12.2 的 x86/64 SDK；分别生成 IPK 与 APK 安装包。
 
 ## 当前版本
 
@@ -23,7 +23,7 @@
 
 ## 构建
 
-CI 仅使用 ImmortalWrt 24.10.6 x86/64 SDK，生成架构无关的 LuCI IPK；Mihomo 核心在设备端按架构下载，不打入安装包。
+CI 使用 ImmortalWrt 24.10.6 与 25.12.2 x86/64 SDK，生成架构无关的 LuCI IPK/APK；Mihomo 核心在设备端按架构下载，不打入安装包。
 
 ## 许可证
 
