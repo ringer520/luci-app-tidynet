@@ -46,6 +46,7 @@
 }
 .tn-eyebrow { display: block; color: var(--tn-green); font-size: 10px; font-weight: 800; letter-spacing: .13em; }
 .tn-status { gap: 9px; margin-top: 9px; font-size: 20px; }
+.tn-core-version { display: block; margin-top: 8px; color: var(--tn-muted); font-size: 11px; overflow-wrap: anywhere; }
 .tn-dot { width: 9px; height: 9px; display: inline-block; border-radius: 50%; background: #9aa9a5; }
 .tn-dot.ok { background: #2da879; box-shadow: 0 0 0 4px #2da8791e; }
 .tn-hero-copy p { max-width: 690px; margin: 8px 0 0; color: var(--tn-muted); font-size: 13px; }

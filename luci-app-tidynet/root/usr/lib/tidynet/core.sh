@@ -59,9 +59,13 @@ start_job_locked() {
  json_add_string message '已提交后台任务，首页将自动更新状态。'; json_dump
 }
 status() {
- local nikki=0 running=0 ab=0 ab_json svc ab_running='' ab_enabled=0 entries='' state='' dns=''
+ local nikki=0 core=0 core_version='' ready=0 running=0 ab=0 ab_json svc ab_running='' ab_enabled=0 entries='' state='' dns=''
  local sources=0 section active job busy=0 hijack=0 dnsmasq=0
  installed nikki && nikki=1
+ if command -v mihomo >/dev/null 2>&1; then
+  core=1
+  core_version=$(mihomo -v 2>/dev/null | head -n 1 | cut -c 1-128)
+ fi
  pidof mihomo >/dev/null 2>&1 && running=1
  pidof dnsmasq >/dev/null 2>&1 && dnsmasq=1
  installed adblock-fast && ab=1
@@ -84,6 +88,7 @@ status() {
    [ "$(get "adblock-fast.$section.action")" = allow ] || sources=$((sources+1))
   done
  fi
+ [ "$nikki" = 1 ] && [ "$core" = 1 ] && [ "$ab" = 1 ] && ready=1
  if [ "$(get nikki.proxy.ipv4_dns_hijack)" = 1 ] || [ "$(get nikki.proxy.ipv6_dns_hijack)" = 1 ] || [ "$(get nikki.mixin.tun_dns_hijack)" = 1 ]; then hijack=1; fi
  job=$(cat "$TN_RUN/job.json" 2>/dev/null)
  if [ -d "$TN_RUN/lock" ]; then
@@ -93,9 +98,11 @@ status() {
   elif is_uint "$stamp" && [ $((now-stamp)) -le 15 ]; then busy=1; fi
  fi
  active=$(get nikki.config.profile)
- json_init; json_add_boolean ok 1; json_add_string version '0.2.0'; json_add_boolean busy "$busy"
+ json_init; json_add_boolean ok 1; json_add_string version '0.3.0'; json_add_boolean busy "$busy"
+ json_add_boolean dependencies_ready "$ready"
  json_add_object mihomo
  json_add_boolean installed "$nikki"; json_add_boolean running "$running"; bool_field enabled "$(get nikki.config.enabled)"
+ json_add_boolean core_installed "$core"; json_add_string core_version "$core_version"
  json_add_string api "$(get nikki.mixin.api_listen)"; json_add_string ui_path "$(get nikki.mixin.ui_path)"
  json_add_string dashboard_url "$(get tidynet.main.dashboard_url)"
  json_add_boolean dns_hijack "$hijack"; json_close_object
@@ -268,6 +275,8 @@ configure_locked() {
 action_locked() {
  local operation=$1 section=$2 pkg
  case "$operation" in
+ dependencies-install|mihomo-core-update)
+  start_job_locked "$operation" ''; return;;
  subscription-update|subscription-use)
   installed nikki && is_section nikki "$section" subscription || { error '订阅不存在或 Nikki 未安装。'; return; }; pkg=nikki;;
  mihomo-start|mihomo-stop|mihomo-reload)

@@ -18,7 +18,7 @@ LuCI 页面只调用 rpcd 注册的 `tidynet` 对象。rpcd 的 shell 入口调�
 - `settings {}`：返回当前面板地址、DNS 上游组、广告规则源元数据及自定义域名。订阅 URL、规则源 URL、AdGuard Home 密码均不返回。
 - `stats {}`：关闭时返回 `connected=false`；启用时用回环地址请求 AdGuard Home `/control/stats`，返回查询/过滤拦截数、其统计窗口和历史序列。
 - `configure { payload: JSON-string }`：仅接受订阅、规则源、自定义域名、DNS 上游或本插件连接设置的编辑和删除操作。
-- `action { operation, section }`：仅接受 Nikki 启停/重载、已配置订阅更新和 adblock-fast 启停/更新/重载操作。
+- `action { operation, section }`：仅接受 Nikki 启停/重载、已配置订阅更新、adblock-fast 启停/更新/重载、依赖安装和 Mihomo 核心更新操作。
 - `resolve { domain }`：验证完整域名后，通过 `timeout` 和 `nslookup` 向路由器 `127.0.0.1:53` 发起一次查询，最多返回 4 KiB 输出。
 
 ACL 将状态、设置和统计方法授予 LuCI 读取权限；配置写入与服务操作另外授权。接口不提供通用 shell、UCI 命令、文件读取或 URL 抓取功能。
@@ -31,6 +31,12 @@ ACL 将状态、设置和统计方法授予 LuCI 读取权限；配置写入与�
 
 Mihomo、Nikki 和 adblock-fast 命令路径固定在 `/etc/init.d`，命令名和动作使用白名单。服务命令最长执行 600 秒；规则下载状态最多观察 240 秒。任务状态不会包含订阅和规则源地址。AdGuard Home 密码只保存在 root-only 的本机 UCI 配置中，curl 从标准输入读取认证配置，并限制回环地址、协议、时间和响应大小。
 
+## 独立安装与核心维护
+
+TidyNet 包仅声明 LuCI、rpcd、libubus/libubox、jsonfilter、curl 和 CA 证书等基础依赖；Nikki、Mihomo 和 adblock-fast 由首页显式触发安装，避免用户必须先手动配置外部 feed。后台根据 `/etc/openwrt_release` 的 24.10、25.12 或 SNAPSHOT 版本及 `DISTRIB_ARCH` 选择 Nikki 官方 feed，下载其 feed 签名公钥，再交给 `opkg` 或 `apk` 校验并安装软件包。安装请求包含 Nikki、LuCI 页面、Mihomo 核心和 adblock-fast，具体系统依赖由包管理器解析。
+
+核心更新沿用已安装的 `mihomo-alpha` 变体，否则使用 `mihomo-meta`。若 Nikki 正在运行，先尝试停止、更新完成后再尝试启动；更新失败时页面显示失败状态。该流程不运行 Nikki 仓库提供的远端 shell 安装脚本，不会自动启用服务。
+
 ## 统计定义
 
 1. **加载规则域名**来自 adblock-fast 官方 rpcd 的 `entries` 字段；若其 Lua/ucode rpcd 方法不可用，则尝试其服务数据。该数字不是请求数或用户数。
@@ -40,5 +46,5 @@ Mihomo、Nikki 和 adblock-fast 命令路径固定在 `/etc/init.d`，命令名�
 
 ## 手工检查清单
 
-部署到测试路由器后，逐项检查安装入口和 ACL、Nikki 未安装/运行/停止三种状态、订阅新增更新切换与删除、URL 留空编辑、adblock-fast 规则源和域名保存及回滚提示、规则下载后台成功/失败、adblock-fast 缺失时的退化界面、两种 DNS 模式及上游组、有效/无效解析诊断、AdGuard Home 正确凭据/错误凭据/服务离线、客户端真实 DNS 与广告拦截，以及路由器重启后的本机统计密码权限。不同 ImmortalWrt 版本、Nikki/adblock-fast release、DNS 拓扑和 WebUI 访问路径均需实机复核。
+部署到测试路由器后，逐项检查安装入口和 ACL、首页下载依赖、24.10/25.12/SNAPSHOT feed 映射、opkg/apk 签名验证和安装失败状态、核心首次下载/更新及 Nikki 重启、Nikki 未安装/运行/停止三种状态、订阅新增更新切换与删除、URL 留空编辑、adblock-fast 规则源和域名保存及回滚提示、规则下载后台成功/失败、adblock-fast 缺失时的退化界面、两种 DNS 模式及上游组、有效/无效解析诊断、AdGuard Home 正确凭据/错误凭据/服务离线、客户端真实 DNS 与广告拦截，以及路由器重启后的本机统计密码权限。不同 ImmortalWrt 版本、Nikki/adblock-fast release、DNS 拓扑和 WebUI 访问路径均需实机复核。
 

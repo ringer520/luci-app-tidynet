@@ -1,10 +1,10 @@
 include $(TOPDIR)/rules.mk
 
 LUCI_TITLE:=TidyNet - Mihomo, DNS and Ad Blocking Manager
-LUCI_DEPENDS:=+luci-base +rpcd +libubox +libubus +ubus +jsonfilter +curl +adblock-fast +luci-app-nikki
+LUCI_DEPENDS:=+luci-base +rpcd +libubox +libubus +ubus +jsonfilter +curl +ca-bundle
 LUCI_PKGARCH:=all
 PKG_LICENSE:=GPL-3.0-or-later
-PKG_VERSION:=0.2.0
+PKG_VERSION:=0.3.0
 PKG_RELEASE:=1
 
 define Package/luci-app-tidynet/conffiles

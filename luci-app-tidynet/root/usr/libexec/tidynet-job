@@ -8,6 +8,7 @@ trap 'unlock' EXIT
 trap 'job_record "$operation" error "任务被中断，请检查后端状态。"; exit 1' HUP INT TERM
 rc=0
 message='任务已完成。'
+error_message='任务失败或未能确认完成；已保存的配置会保留。请检查网络、软件源和后端状态后重试。'
 run_service() {
  if [ -n "$3" ]; then timeout 600 "$TN_INIT/$1" "$2" "$3" >/dev/null 2>&1
  else timeout 600 "$TN_INIT/$1" "$2" >/dev/null 2>&1; fi
@@ -17,7 +18,91 @@ set_config() {
  if ! set_value "$2" "$3"; then stage_abort; return 1; fi
  stage_end
 }
+setup_nikki_feed() {
+ [ -x /sbin/fw4 ] || { error_message='当前固件缺少 firewall4，Nikki 不支持此设备。'; return 1; }
+ [ -r /etc/openwrt_release ] || { error_message='无法识别 OpenWrt/ImmortalWrt 版本。'; return 1; }
+ . /etc/openwrt_release
+ case "$DISTRIB_RELEASE" in
+  *24.10*) branch=openwrt-24.10;;
+  *25.12*) branch=openwrt-25.12;;
+  SNAPSHOT*) branch=SNAPSHOT;;
+  *) error_message="暂不支持固件版本 ${DISTRIB_RELEASE:-unknown}。"; return 1;;
+ esac
+ case "$DISTRIB_ARCH" in ''|*[!A-Za-z0-9_-]*) error_message='固件报告的设备架构无效。'; return 1;; esac
+ feed_url="https://nikkinikki.pages.dev/$branch/$DISTRIB_ARCH/nikki"
+ key_file="$TN_RUN/nikki-feed-key"
+ mkdir -p "$TN_RUN" || return 1
+ if [ -x /bin/opkg ]; then
+  curl --fail --location --silent --show-error --retry 3 --connect-timeout 10 --max-time 60 --max-filesize 32768 --proto '=https' https://nikkinikki.pages.dev/key-build.pub -o "$key_file" || { error_message='下载 Nikki 软件源签名密钥失败，请检查网络连接。'; return 1; }
+  opkg-key add "$key_file" >/dev/null 2>&1 || { rm -f "$key_file"; error_message='导入 Nikki 软件源签名密钥失败。'; return 1; }
+  rm -f "$key_file"
+  mkdir -p /etc/opkg
+  touch /etc/opkg/customfeeds.conf
+  feed_line="src/gz tidynet-nikki $feed_url"
+  grep -Fqx "$feed_line" /etc/opkg/customfeeds.conf || printf '%s\n' "$feed_line" >> /etc/opkg/customfeeds.conf
+ elif [ -x /usr/bin/apk ]; then
+  mkdir -p /etc/apk/keys /etc/apk/repositories.d
+  curl --fail --location --silent --show-error --retry 3 --connect-timeout 10 --max-time 60 --max-filesize 32768 --proto '=https' https://nikkinikki.pages.dev/public-key.pem -o "$key_file" || { error_message='下载 Nikki 软件源签名密钥失败，请检查网络连接。'; return 1; }
+  install -m 0644 "$key_file" /etc/apk/keys/tidynet-nikki.pem || { rm -f "$key_file"; return 1; }
+  rm -f "$key_file"
+  repo_line="$feed_url/packages.adb"
+  touch /etc/apk/repositories.d/customfeeds.list
+  grep -Fqx "$repo_line" /etc/apk/repositories.d/customfeeds.list || printf '%s\n' "$repo_line" >> /etc/apk/repositories.d/customfeeds.list
+ else
+  error_message='未检测到 opkg 或 apk 软件包管理器。'; return 1
+ fi
+}
+install_runtime_dependencies() {
+ if [ -x /bin/opkg ]; then
+  opkg update >/dev/null 2>&1 || { error_message='系统软件源更新失败。'; return 1; }
+  if opkg list-installed mihomo-alpha 2>/dev/null | grep -q '^mihomo-alpha '; then core_package=mihomo-alpha
+  else core_package=mihomo-meta; fi
+  opkg install ca-bundle curl adblock-fast "$core_package" nikki luci-app-nikki >/dev/null 2>&1 || { error_message='运行组件安装失败，请检查设备架构、软件源空间和 Nikki 软件源状态。'; return 1; }
+ elif [ -x /usr/bin/apk ]; then
+  apk update >/dev/null 2>&1 || { error_message='系统软件源更新失败。'; return 1; }
+  if apk info -e mihomo-alpha >/dev/null 2>&1; then core_package=mihomo-alpha
+  else core_package=mihomo-meta; fi
+  apk add ca-bundle curl adblock-fast "$core_package" nikki luci-app-nikki >/dev/null 2>&1 || { error_message='运行组件安装失败，请检查设备架构、软件源空间和 Nikki 软件源状态。'; return 1; }
+ else
+  error_message='未检测到 opkg 或 apk 软件包管理器。'; return 1
+ fi
+}
+update_mihomo_core() {
+ local was_running=0
+ if [ -x /bin/opkg ]; then
+  if opkg list-installed mihomo-alpha 2>/dev/null | grep -q '^mihomo-alpha '; then core_package=mihomo-alpha
+  else core_package=mihomo-meta; fi
+ elif [ -x /usr/bin/apk ]; then
+  if apk info -e mihomo-alpha >/dev/null 2>&1; then core_package=mihomo-alpha
+  else core_package=mihomo-meta; fi
+ else error_message='未检测到 opkg 或 apk 软件包管理器。'; return 1; fi
+ if pidof mihomo >/dev/null 2>&1 && [ -x "$TN_INIT/nikki" ]; then
+  was_running=1
+  run_service nikki stop || { error_message='无法安全停止 Mihomo；未更新核心。'; return 1; }
+ fi
+ if [ -x /bin/opkg ]; then
+  opkg update >/dev/null 2>&1 || { error_message='软件源更新失败，Mihomo 核心未更新。'; rc=1; }
+  if [ "$rc" = 0 ]; then
+   if opkg list-installed "$core_package" 2>/dev/null | grep -q "^$core_package "; then
+    opkg upgrade "$core_package" >/dev/null 2>&1 || { error_message='Mihomo 核心更新失败。'; rc=1; }
+   else opkg install "$core_package" >/dev/null 2>&1 || { error_message='Mihomo 核心下载或安装失败。'; rc=1; }; fi
+  fi
+ elif [ -x /usr/bin/apk ]; then
+  apk update >/dev/null 2>&1 || { error_message='软件源更新失败，Mihomo 核心未更新。'; rc=1; }
+  if [ "$rc" = 0 ]; then
+   if apk info -e "$core_package" >/dev/null 2>&1; then
+    apk upgrade "$core_package" >/dev/null 2>&1 || { error_message='Mihomo 核心更新失败。'; rc=1; }
+   else apk add "$core_package" >/dev/null 2>&1 || { error_message='Mihomo 核心下载或安装失败。'; rc=1; }; fi
+  fi
+ else error_message='未检测到 opkg 或 apk 软件包管理器。'; rc=1; fi
+ if [ "$was_running" = 1 ]; then run_service nikki start || { error_message='核心操作后 Nikki 未能重新启动，请检查配置。'; rc=1; }; fi
+ [ "$rc" = 0 ]
+}
 case "$operation" in
+ dependencies-install)
+  if setup_nikki_feed && install_runtime_dependencies; then message='运行组件已安装或更新。'; else rc=1; fi;;
+ mihomo-core-update)
+  if setup_nikki_feed && update_mihomo_core; then message='Mihomo 核心已下载或更新。'; else rc=1; fi;;
  subscription-update|subscription-use)
   if ! is_section nikki "$section" subscription; then rc=1
   else
@@ -63,6 +148,6 @@ case "$operation" in adblock-update)
  fi;;
 esac
 if [ "$rc" = 0 ]; then job_record "$operation" success "$message"
-else job_record "$operation" error '任务失败或未能确认完成；已保存的配置会保留。请检查后端状态和配置后重试。'; fi
+else job_record "$operation" error "$error_message"; fi
 exit "$rc"
 

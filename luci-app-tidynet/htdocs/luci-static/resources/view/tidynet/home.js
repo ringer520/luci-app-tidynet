@@ -110,13 +110,13 @@ return view.extend({
 		ui.showModal(title, [ E("div", { "class": "tn-form" }, body) ], footer);
 	},
 
-	confirm: function(title, detail, yes, operation, section) {
+	confirm: function(title, detail, yes, operation, section, positive) {
 		var self = this;
 		ui.showModal(title, [
 			E("p", { "class": "tn-confirm-copy" }, [ detail ]),
 			E("div", { "class": "tn-modal-actions" }, [
 				E("button", { "class": "cbi-button", "click": function() { ui.hideModal(); } }, [ _("取消") ]),
-				E("button", { "class": "cbi-button cbi-button-negative", "click": ui.createHandlerFn(this, function() {
+				E("button", { "class": "cbi-button " + (positive ? "cbi-button-action" : "cbi-button-negative"), "click": ui.createHandlerFn(this, function() {
 					ui.hideModal(); return self.action(operation, section);
 				}) }, [ yes ])
 			])
@@ -283,15 +283,22 @@ return view.extend({
 		]);
 		root.appendChild(E("header", { "class": "tn-header" }, [ title, headerActions ]));
 
-		var stateText = mihomo.running ? _("运行中") : (mihomo.installed ? _("已停止") : _("未安装 Nikki"));
+		var stateText = mihomo.running ? _("运行中") : (mihomo.installed ? _("已停止") : _("运行组件未安装"));
 		var stateClass = mihomo.running ? "ok" : "muted";
 		var primary = E("section", { "class": "tn-card tn-hero" }, [
 			E("div", { "class": "tn-hero-copy" }, [
 				E("div", { "class": "tn-eyebrow" }, [ _("mihomo 核心") ]),
 				E("div", { "class": "tn-status" }, [ E("i", { "class": "tn-dot " + stateClass }), E("strong", {}, [ stateText ]) ]),
-				E("p", {}, [ mihomo.dns_hijack && ad.enabled ? _("DNS 请求由 Mihomo 与广告过滤分别处理，请确认端口转发规则。") : _("订阅、DNS 和过滤规则都可以在此管理。") ])
+				E("p", {}, [ mihomo.dns_hijack && ad.enabled ? _("DNS 请求由 Mihomo 与广告过滤分别处理，请确认端口转发规则。") : _("订阅、DNS 和过滤规则都可以在此管理。") ]),
+				E("small", { "class": "tn-core-version" }, [ mihomo.core_version ? _("核心版本：%s").format(mihomo.core_version) : _("尚未安装 Mihomo 核心") ])
 			]),
 			E("div", { "class": "tn-hero-actions" }, [
+				!s.dependencies_ready ? E("button", { "class": "cbi-button cbi-button-action", disabled: !!s.busy, "click": ui.createHandlerFn(this, function() {
+					self.confirm(_("下载并安装运行组件"), _("TidyNet 将通过系统软件源安装 Nikki、Mihomo 核心和 adblock-fast，并自动处理它们的依赖。不会自动启用代理或广告过滤。"), _("开始安装"), "dependencies-install", null, true);
+				}) }, [ _("安装运行组件") ]) : "",
+				E("button", { "class": "cbi-button", disabled: !!s.busy, "click": ui.createHandlerFn(this, function() {
+					self.confirm(mihomo.core_installed ? _("下载并更新 Mihomo 核心") : _("下载 Mihomo 核心"), _("从已验证签名的 Nikki 软件源下载 Mihomo 核心。若代理正在运行，TidyNet 会在更新后尝试重新启动。"), mihomo.core_installed ? _("更新核心") : _("下载核心"), "mihomo-core-update", null, true);
+				}) }, [ mihomo.core_installed ? _("下载 / 更新核心") : _("下载 Mihomo 核心") ]),
 				E("button", { "class": "cbi-button", disabled: !!s.busy || !mihomo.installed, "click": ui.createHandlerFn(this, function() { return self.action(mihomo.running ? "mihomo-reload" : "mihomo-start"); }) }, [ mihomo.running ? _("重载配置") : _("启动 Mihomo") ]),
 				mihomo.running ? E("button", { "class": "cbi-button tn-danger", disabled: !!s.busy, "click": ui.createHandlerFn(this, function() {
 					self.confirm(_("停止 Mihomo"), _("这会暂停代理与 Mihomo DNS。"), _("停止"), "mihomo-stop");
@@ -343,8 +350,8 @@ return view.extend({
 				return E("span", { title: String(point), style: "height:" + Math.max(5, Math.round(Number(point) / max * 100)) + "%" });
 			}) : [ E("div", { "class": "tn-chart-empty" }, [ _("请求统计接入后显示历史趋势") ]) ]),
 			E("div", { "class": "tn-card-head tn-subhead" }, [ E("strong", {}, [ _("过滤列表") ]),
-				E("button", { "class": "tn-link-btn", "click": ui.createHandlerFn(this, function() { self.saveDomains(settings); }) }, [ _("自定义域名") ]),
-				E("button", { "class": "tn-link-btn", "click": ui.createHandlerFn(this, function() { self.manageSources(settings); }) }, [ _("管理列表") ]) ]),
+				E("button", { "class": "tn-link-btn", disabled: !ad.installed || !!s.busy, "click": ui.createHandlerFn(this, function() { self.saveDomains(settings); }) }, [ _("自定义域名") ]),
+				E("button", { "class": "tn-link-btn", disabled: !ad.installed || !!s.busy, "click": ui.createHandlerFn(this, function() { self.manageSources(settings); }) }, [ _("管理列表") ]) ]),
 			sourceRows.length ? E("div", { "class": "tn-sources" }, sourceRows) : E("div", { "class": "tn-empty tn-small-empty" }, [ _("暂无规则源。") ]),
 			E("div", { "class": "tn-card-actions" }, [
 				E("button", { "class": "cbi-button", disabled: !!s.busy || !ad.installed, "click": ui.createHandlerFn(this, function() { self.editSource(null); }) }, [ _("添加规则源") ]),
