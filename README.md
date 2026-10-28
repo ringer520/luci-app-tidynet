@@ -2,7 +2,7 @@
 
 **TidyNet — Mihomo、DNS 与广告拦截管理器** 是面向 ImmortalWrt / OpenWrt 的 LuCI 插件。首页集中显示 Mihomo 状态、订阅、广告过滤和 DNS；订阅及广告规则源可直接维护，并能查看规则域名数量和可选的真实拦截请求统计。
 
-当前本地开发版本：**0.3.0**。GitHub Actions 在每次 main 分支更新时，分别使用 ImmortalWrt 24.10.6 和 25.12.2 官方 SDK 构建通用 LuCI 包，并附加校验和。
+当前本地开发版本：**0.3.0**。GitHub Actions 在每次 main 分支更新时，只使用 ImmortalWrt 24.10.6 官方 SDK 构建通用 LuCI IPK，并附加校验和。
 
 ## 首页功能
 
@@ -20,11 +20,10 @@
 
 TidyNet 安装包只依赖设备系统中常见的 LuCI、rpcd、libubox/jsonfilter、curl 和 CA 证书包；不会把 Nikki 或 adblock-fast 设为硬依赖，所以不必预先手动添加 Nikki feed。
 
-每次推送到 main 后，GitHub Actions 会构建 ImmortalWrt 24.10.6 的 `.ipk` 和 25.12.2 的 `.apk`。成功构建会在仓库的 Releases 页面发布一个预发布版本；Actions 运行页面也保留 90 天的构建产物。构建使用 ImmortalWrt 官方 x86/64 SDK，TidyNet 自身标记为架构无关（`all`），适用于同版本 ImmortalWrt 的其他设备架构；Nikki、adblock-fast 等运行依赖仍由设备已配置的软件源提供。
+每次推送到 main 后，GitHub Actions 只构建 ImmortalWrt 24.10 的 `.ipk`。成功构建会在仓库的 Releases 页面发布一个预发布版本；Actions 运行页面也保留 90 天的构建产物。构建使用 ImmortalWrt 官方 x86/64 SDK，TidyNet 自身标记为架构无关（`all`），适用于同版本 ImmortalWrt 的其他设备架构；Nikki、adblock-fast 等运行依赖仍由设备已配置的软件源提供。
 
-下载与你设备大版本匹配的包并安装：
+当前持续构建目标为 ImmortalWrt 24.10，下载 IPK 后安装：
 - ImmortalWrt 24.10：`opkg install ./luci-app-tidynet_*.ipk`
-- ImmortalWrt 25.12：`apk add --allow-untrusted ./luci-app-tidynet-*.apk`
 
 构建工作流及版本说明见 [Build ImmortalWrt packages](.github/workflows/build.yml)。
 
