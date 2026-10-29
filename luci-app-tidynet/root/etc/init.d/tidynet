@@ -7,6 +7,7 @@ STOP=10
 
 PROG=/usr/bin/tidynet-mihomo
 RUNDIR=/etc/tidynet/runtime
+. /usr/lib/tidynet/traffic.sh
 
 config_file() {
 	local profile
@@ -30,6 +31,8 @@ start_service() {
 	chmod 700 /etc/tidynet "$RUNDIR"
 	if [ "$(uci -q get tidynet.main.enabled)" = 1 ]; then
 		config="$(config_file)"
+		traffic_profile "$config" "$RUNDIR/config.yaml" || { logger -t tidynet 'Runtime profile generation failed; check yq and TUN dependencies'; return 1; }
+		config="$RUNDIR/config.yaml"
 		"$PROG" -t -d "$RUNDIR" -f "$config" >/tmp/tidynet-config-check.log 2>&1 || {
 			logger -t tidynet "Mihomo configuration validation failed; see /tmp/tidynet-config-check.log"
 			return 1
@@ -54,6 +57,11 @@ start_service() {
 		procd_set_param stderr 1
 		procd_close_instance
 	fi
+	traffic_apply_policy || { logger -t tidynet 'Protocol bypass policy failed'; return 1; }
+}
+
+stop_service() {
+	traffic_clear_policy
 }
 
 reload_service() {

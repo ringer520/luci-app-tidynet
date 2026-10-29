@@ -4,7 +4,7 @@
 		"order": 5,
 		"action": {
 			"type": "view",
-			"path": "tidynet/home"
+			"path": "tidynet/main"
 		},
 		"depends": {
 			"acl": [ "luci-app-tidynet" ]

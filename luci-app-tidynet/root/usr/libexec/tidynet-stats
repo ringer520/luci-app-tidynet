@@ -5,15 +5,30 @@ BASE=/etc/tidynet
 STATE="$BASE/stats"
 HOSTS="$BASE/rules/blocked.hosts"
 PIDFILE=/tmp/tidynet/stats.pid
+PIPE=/tmp/tidynet/stats.pipe
 mkdir -p "$STATE"
 chmod 700 "$STATE"
 mkdir -p /tmp/tidynet
 printf '%s\n' "$$" > "$PIDFILE"
-trap 'rm -f "$PIDFILE"' EXIT HUP INT TERM
 [ -s "$STATE/queries" ] || printf '0\n' > "$STATE/queries"
 [ -s "$STATE/blocked" ] || printf '0\n' > "$STATE/blocked"
 
-logread -f 2>/dev/null | awk -v hosts="$HOSTS" -v state="$STATE" '
+rm -f "$PIPE"
+mkfifo -m 600 "$PIPE" || exit 1
+cleanup() {
+	trap - EXIT HUP INT TERM
+	kill "$reader_pid" "$ticker_pid" "$parser_pid" 2>/dev/null
+	wait "$reader_pid" "$ticker_pid" "$parser_pid" 2>/dev/null
+	rm -f "$PIDFILE" "$PIPE"
+}
+trap cleanup EXIT
+trap 'exit 0' HUP INT TERM
+# Read one initial record as a baseline, then follow new records only.
+logread -l 1 -f -F "$PIPE" >/dev/null 2>&1 &
+reader_pid=$!
+(while sleep 5; do printf '\n'; done) > "$PIPE" &
+ticker_pid=$!
+awk -v hosts="$HOSTS" -v state="$STATE" '
 function flush(   tmp) {
 	if (total == saved_total && blocked_total == saved_blocked) return
 	tmp = state "/queries.new"; print total > tmp; close(tmp); system("mv " tmp " " state "/queries")
@@ -28,7 +43,8 @@ BEGIN {
 	close(hosts); last_flush = systime()
 }
 {
-	for (i = 1; i <= NF; i++) if ($i ~ /^query\[/) {
+	if (NF && !baseline) { baseline = 1; next }
+	for (i = 1; i <= NF; i++) if ($0 ~ /dnsmasq/ && $i ~ /^query\[/) {
 		domain = tolower($(i + 1)); sub(/\.$/, "", domain)
 		total++
 		if (domain in blocked) blocked_total++
@@ -37,4 +53,6 @@ BEGIN {
 	if (systime() - last_flush >= 5) { flush(); last_flush = systime() }
 }
 END { flush() }
-'
+' < "$PIPE" &
+parser_pid=$!
+wait "$parser_pid"
