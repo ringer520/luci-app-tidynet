@@ -1,31 +1,69 @@
-# TidyNet
+<div align="center">
+  <img src="assets/tidynet-icon.svg" alt="TidyNet 项目图标" width="112" height="112">
+  <h1>TidyNet</h1>
+  <p><strong>让 Mihomo、DNS 和广告过滤，在 ImmortalWrt 上一目了然。</strong></p>
+  <p>
+    <a href="https://github.com/ringer520/luci-app-tidynet/actions/workflows/build.yml"><img src="https://github.com/ringer520/luci-app-tidynet/actions/workflows/build.yml/badge.svg?branch=main" alt="构建状态"></a>
+    <a href="LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-79a995.svg" alt="GPL-3.0-or-later"></a>
+    <img src="https://img.shields.io/badge/LuCI-ImmortalWrt-76b7a5.svg" alt="ImmortalWrt LuCI">
+  </p>
+</div>
 
-**TidyNet — Mihomo、DNS 与广告拦截管理器** 是面向 ImmortalWrt 的 LuCI 插件。目标是让用户在一个可交互首页中管理 Mihomo 核心、订阅、DNS、广告规则与统计。
+TidyNet 是一个独立的 ImmortalWrt LuCI 插件，用一个简洁的交互页面管理 Mihomo 核心、订阅、代理策略、DNS、广告过滤和流量接管。插件按需下载 Mihomo 核心，安装包不捆绑核心文件。
 
-## 独立版重构状态
+## 功能一览
 
-当前本地开发版 **0.4.0** 是独立插件实现：自有 Mihomo procd 服务、官方核心下载校验、YAML 订阅管理、DNS 上游、dnsmasq hosts 广告规则、请求计数和交互首页都已接入代码。仍需在 ImmortalWrt 24.10.5 目标设备验证依赖安装、dnsmasq 实际行为、统计准确性和安装/卸载恢复。新的边界、首页操作和分阶段验收见[独立版架构基线](docs/architecture.md)。
+- **Mihomo 核心**：查看本机版本、官方最新版本和运行状态；从首页下载、更新、启动、停止或重载核心。
+- **订阅管理**：添加远程订阅或上传本地配置，手动更新或设置更新周期，并查看上次更新时间和当前使用的配置。
+- **代理策略**：查看策略组与当前节点，手动切换节点；支持节点延时测试和一键优选。
+- **DNS 设置**：分别配置直连域名与代理域名、上游 DNS 和缓存；可查看 DNS 接管状态。
+- **广告过滤**：管理规则源和自定义域名，设置自动更新周期；查看生效规则数量、累计拦截统计。
+- **流量接管**：独立配置 TCP、UDP 接管方式，并在页面查看运行状态。
+- **连接状态**：按需测试 Google、OpenAI 和阿里云连通延时，刷新后保留上次结果。
+- **轻量易用**：以独立首页集中呈现常用状态和操作，适配桌面与窄屏布局。
 
-独立版目标：
+## 独立运行
 
-- 不安装、配置或调用 Nikki、adblock-fast、AdGuard Home。
-- LuCI 插件管理自身配置、服务与 DNS/广告规则流程；Mihomo 核心由首页显式下载和更新。
-- 首页把 Google/OpenAI 连通测试、订阅和广告过滤放在前面；代理策略组提供测速和一键优选，按同组可用节点延时切换到最快节点。
-- 策略切换与节点优选通过受令牌保护的 Mihomo 控制 API 完成；URLTest 自动组仍由 Mihomo 自己选择。
-- GitHub Actions 同时构建 ImmortalWrt 24.10.6 和 25.12.2 的 x86/64 SDK；分别生成 IPK 与 APK 安装包。
+TidyNet 自行管理 Mihomo 服务、订阅、DNS 和过滤规则，不依赖或调用 Nikki、adblock-fast、AdGuard Home。DNS 与广告过滤通过 ImmortalWrt 自带的 dnsmasq 协作；启用相应功能后，插件会维护所需的 dnsmasq 配置。使用客户端自带的 DoH/DoT 时，客户端可能绕过路由器的 DNS 过滤。
 
-## 当前版本
+安装插件不会自动下载 Mihomo、启用代理或接管流量。请在首页按需配置并启用相关功能。移除插件前，建议备份配置；卸载流程会尝试清理插件添加的 dnsmasq 项目并恢复其记录的原始设置。
 
-本地开发版本：**0.4.0**。该版本尚未完成 ImmortalWrt 24.10.5 路由器实机验收；安装前请备份 `/etc/config/tidynet` 与 `/etc/config/dhcp`。启用 DNS/广告过滤会改动 TidyNet 管理的 dnsmasq 项，关闭或卸载时会尝试撤销这些项目。
+## 安装
 
-## 架构与路线
+从 [GitHub Releases](https://github.com/ringer520/luci-app-tidynet/releases) 下载与你的 ImmortalWrt 版本相符的安装包：
 
-查看[独立版架构基线](docs/architecture.md)，内容包括目标首页交互、核心更新安全流程、DNS 与广告集成边界、RPC 安全约束、实施阶段和 24.10 验收标准。
+| ImmortalWrt | 安装包 | 构建目标 |
+| --- | --- | --- |
+| 24.10 | `.ipk` | 24.10.6 x86/64 SDK |
+| 25.12 | `.apk` | 25.12.2 x86/64 SDK |
 
-## 构建
+也可以在 [GitHub Actions](https://github.com/ringer520/luci-app-tidynet/actions/workflows/build.yml) 查看每次构建的产物。上传前请确认设备版本与包格式匹配，并让系统包管理器从已配置的软件源安装依赖。安装后在 LuCI 的 **服务 → TidyNet** 打开管理页面。
 
-CI 使用 ImmortalWrt 24.10.6 与 25.12.2 x86/64 SDK，生成架构无关的 LuCI IPK/APK；Mihomo 核心在设备端按架构下载，不打入安装包。
+当前工作流针对 x86/64 SDK 生成架构无关的 LuCI 包。Mihomo 核心在设备端由用户显式触发下载，并按设备架构选择对应文件。
 
-## 许可证
+## 从源码构建
 
-TidyNet 使用 GPL-3.0-or-later，详见 [LICENSE](LICENSE)。Mihomo 是独立上游项目，下载和分发遵守其上游许可与发布说明。
+将 `luci-app-tidynet` 放到 ImmortalWrt 源码树的 `package/` 目录下，并在 SDK 中准备好 LuCI feed 后构建：
+
+```sh
+make package/luci-app-tidynet/compile V=s
+```
+
+GitHub Actions 工作流可作为依赖准备、构建环境和 SDK 版本的参考：[`build.yml`](.github/workflows/build.yml)。
+
+## 项目结构
+
+```text
+.
+├── assets/                 # README 与项目使用的品牌图标
+├── docs/                   # 架构与设计说明
+└── luci-app-tidynet/
+    ├── htdocs/             # LuCI 页面、样式和界面图标
+    └── root/               # 服务、RPC、配置与后台任务
+```
+
+## 版本与许可
+
+当前软件包版本为 **0.4.0-r37**。项目采用 [GPL-3.0-or-later](LICENSE)。Mihomo 为独立上游项目，其核心许可和使用条款以 [Mihomo 项目](https://github.com/MetaCubeX/mihomo)的说明为准。
+
+欢迎通过 [Issues](https://github.com/ringer520/luci-app-tidynet/issues) 报告问题或提出改进建议。
